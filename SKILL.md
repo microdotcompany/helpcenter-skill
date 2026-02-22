@@ -1,18 +1,21 @@
 ---
-name: Helpcenter
+name: helpcenter
 description: >
-  Use this skill whenever the user wants to create, update, read, or manage help center articles
-  via the Help.Center API. Triggers include: requests to "write a help article", "update the docs",
-  "publish an article", "add to the help center", "create a knowledge base article", "edit the
-  getting started guide", or any mention of Help.Center, help articles, or knowledge base content
-  management. Also use when the user wants to search existing articles, manage drafts, change
-  categories, or publish/unpublish content. If the user provides article content or asks to document
-  a feature, use this skill to push it to their help center via the API.
+  When the user wants to create, update, read, or manage help center articles
+  via the Help.Center API. Use when the user says "write a help article",
+  "update the docs", "publish an article", "add to the help center", "create a
+  knowledge base article", "edit the getting started guide", or mentions
+  Help.Center, help articles, or knowledge base content management. Also use
+  when the user wants to search existing articles, manage drafts, change
+  categories, or publish/unpublish content.
+metadata:
+  version: 1.0.0
+  author: Microdot Company
 ---
 
 # Help.Center Article Management
 
-This skill manages help center articles through the Help.Center API. It supports creating new articles, reading and updating existing ones, publishing/unpublishing, and organizing by category.
+Manage help center articles through the Help.Center API. Supports creating new articles, reading and updating existing ones, publishing/unpublishing, and organizing by category.
 
 ## Prerequisites
 
