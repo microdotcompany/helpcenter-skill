@@ -21,6 +21,20 @@ Create, update, search, publish, and organize help center articles directly from
 claude install-skill https://github.com/microdotcompany/helpcenter-skill
 ```
 
+### OpenClaw
+
+Tell your agent:
+
+```
+Install the helpcenter skill from https://github.com/microdotcompany/helpcenter-skill
+```
+
+### Git Submodule
+
+```bash
+git submodule add https://github.com/microdotcompany/helpcenter-skill.git .skills/helpcenter-skill
+```
+
 ### Codex
 
 Clone into your Codex skills directory:
@@ -33,46 +47,6 @@ Or for a project-specific install:
 
 ```bash
 git clone https://github.com/microdotcompany/helpcenter-skill.git .agents/skills/helpcenter-skill
-```
-
-### OpenClaw
-
-Clone into your OpenClaw skills directory:
-
-```bash
-git clone https://github.com/microdotcompany/helpcenter-skill.git ~/.openclaw/skills/helpcenter-skill
-```
-
-Or add the cloned path to `~/.openclaw/openclaw.json`:
-
-```json
-{
-  "skills": {
-    "load": {
-      "extraDirs": ["~/.openclaw/skills/helpcenter-skill"]
-    }
-  }
-}
-```
-
-### Cursor / Windsurf
-
-Clone into your project:
-
-```bash
-git clone https://github.com/microdotcompany/helpcenter-skill.git .skills/helpcenter-skill
-```
-
-Then add to your `.cursorrules` or agent config:
-
-```
-Read and follow .skills/helpcenter-skill/SKILL.md
-```
-
-### Git Submodule
-
-```bash
-git submodule add https://github.com/microdotcompany/helpcenter-skill.git .skills/helpcenter-skill
 ```
 
 ### Manual
