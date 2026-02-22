@@ -29,12 +29,6 @@ Tell your agent:
 Install the helpcenter skill from https://github.com/microdotcompany/helpcenter-skill
 ```
 
-### Git Submodule
-
-```bash
-git submodule add https://github.com/microdotcompany/helpcenter-skill.git .skills/helpcenter-skill
-```
-
 ### Codex
 
 Clone into your Codex skills directory:
