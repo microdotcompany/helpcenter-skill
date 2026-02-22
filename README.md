@@ -21,6 +21,40 @@ Create, update, search, publish, and organize help center articles directly from
 claude install-skill https://github.com/microdotcompany/helpcenter-skill
 ```
 
+### Codex
+
+Clone into your Codex skills directory:
+
+```bash
+git clone https://github.com/microdotcompany/helpcenter-skill.git ~/.agents/skills/helpcenter-skill
+```
+
+Or for a project-specific install:
+
+```bash
+git clone https://github.com/microdotcompany/helpcenter-skill.git .agents/skills/helpcenter-skill
+```
+
+### OpenClaw
+
+Clone into your OpenClaw skills directory:
+
+```bash
+git clone https://github.com/microdotcompany/helpcenter-skill.git ~/.openclaw/skills/helpcenter-skill
+```
+
+Or add the cloned path to `~/.openclaw/openclaw.json`:
+
+```json
+{
+  "skills": {
+    "load": {
+      "extraDirs": ["~/.openclaw/skills/helpcenter-skill"]
+    }
+  }
+}
+```
+
 ### Cursor / Windsurf
 
 Clone into your project:
