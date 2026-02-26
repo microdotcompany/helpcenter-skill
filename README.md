@@ -49,10 +49,14 @@ Copy `SKILL.md` into your project and point your agent to it.
 
 ## Setup
 
-You'll need two things from your Help.Center dashboard (**Settings > General > API**):
+You'll need to create an API key from your Help.Center dashboard (**Settings > General > API**):
 
-1. **API Key**
-2. **Center ID**
+1. **API Key** - Create a new key with the necessary scopes:
+   - `content.read` - for searching and reading articles
+   - `content.write` - for creating and updating articles
+   - `content.publish` - for publishing articles (optional)
+   - `content.delete` - for deleting articles (optional)
+2. **Center ID** - Found on the same page
 
 The skill will ask for these when you first use it.
 

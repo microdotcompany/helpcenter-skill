@@ -21,8 +21,13 @@ Manage help center articles through the Help.Center API. Supports creating new a
 
 Before making any API calls, you need two pieces of information from the user:
 
-1. **API Key** - Found in Help.Center dashboard under Settings > General > API
-2. **Center ID** - Found in the same location
+1. **API Key** - Created in Help.Center dashboard under Settings > General > API
+   - The key must have appropriate scopes:
+     - `content.read` - Required for searching/reading articles
+     - `content.write` - Required for creating/updating articles and categories
+     - `content.publish` - Required for publishing/unpublishing articles
+     - `content.delete` - Required for deleting articles or categories
+2. **Center ID** - Found on the same page
 
 If the user hasn't provided these, ask for them before proceeding. Store them as environment variables for the session:
 
@@ -112,8 +117,7 @@ Authorization: Bearer $HC_API_KEY
        "content": {
          "html": "<h1>Title</h1><p>Content here...</p>"
        },
-       "category_id": "category-slug",
-       "status": "draft"
+       "category_id": "category-slug"
      }' \
      "https://api.help.center/v0/centers/$HC_CENTER_ID/articles"
    ```
@@ -135,6 +139,7 @@ Authorization: Bearer $HC_API_KEY
 
 4. **Handle errors gracefully.** Check HTTP status codes. Common issues:
    - 401: API key is invalid or missing
+   - 403: Insufficient permissions (missing required scope)
    - 404: Article or center not found
    - 400: Missing required fields (title is always required)
    - 429: Rate limited (wait and retry)
@@ -159,6 +164,10 @@ Authorization: Bearer $HC_API_KEY
 | Get draft | GET | `/v0/centers/:centerId/articles/:articleId/draft` |
 | Discard draft | POST | `/v0/centers/:centerId/articles/:articleId/draft/discard` |
 | List categories | GET | `/v0/centers/:centerId/articles/categories` |
+| Create category | POST | `/v0/centers/:centerId/articles/categories` |
+| Update category | PATCH | `/v0/centers/:centerId/articles/categories/:categoryId` |
+| Delete category | DELETE | `/v0/centers/:centerId/articles/categories/:categoryId` |
+| Upload image | POST | `/v0/centers/:centerId/articles/images` |
 | Get center info | GET | `/v0/centers/:centerId` |
 | Count articles | GET | `/v0/centers/:centerId/articles/count` |
 
@@ -170,9 +179,77 @@ When writing help center articles:
 - **Use short paragraphs.** 2-3 sentences max per paragraph.
 - **Add step-by-step instructions** with numbered lists for procedures.
 - **Include examples** wherever possible to make abstract concepts concrete.
-- **Use screenshots or visuals** references where helpful (note: images need to be hosted externally and referenced via URL in the HTML).
+- **Use screenshots or visuals** references where helpful (use the image upload endpoint to host images, then reference the returned URL in your HTML).
 - **End with next steps** or related articles when relevant.
 - **Write for scanning.** Use descriptive headings so users can jump to what they need.
+
+## Category Management
+
+Categories help organize your articles. You can create hierarchical categories with one level of subcategories.
+
+### Creating a category:
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer $HC_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Getting Started",
+    "description": "Articles for new users",
+    "icon": "<svg>...</svg>",  // Optional custom SVG icon
+    "parent_id": "parent-cat-id"  // Optional, for subcategories
+  }' \
+  "https://api.help.center/v0/centers/$HC_CENTER_ID/articles/categories"
+```
+
+### Updating a category:
+```bash
+curl -s -X PATCH \
+  -H "Authorization: Bearer $HC_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Updated Name",
+    "description": "Updated description",
+    "icon": "<svg>...</svg>"
+  }' \
+  "https://api.help.center/v0/centers/$HC_CENTER_ID/articles/categories/CATEGORY_ID"
+```
+
+### Deleting a category:
+Categories can only be deleted if no articles are using them.
+
+```bash
+curl -s -X DELETE \
+  -H "Authorization: Bearer $HC_API_KEY" \
+  "https://api.help.center/v0/centers/$HC_CENTER_ID/articles/categories/CATEGORY_ID"
+```
+
+## Image Upload
+
+Upload images for use in your articles:
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer $HC_API_KEY" \
+  -F "image=@/path/to/image.jpg" \
+  "https://api.help.center/v0/centers/$HC_CENTER_ID/articles/images"
+```
+
+**Constraints:**
+- Maximum size: 10MB
+- Supported formats: JPEG, PNG, GIF, WebP, SVG
+- Use `multipart/form-data` with field name `image`
+
+The response will include the image URL to use in your article HTML:
+```json
+{
+  "success": true,
+  "data": {
+    "url": "https://cdn.help.center/images/...",
+    "filename": "image.jpg",
+    "size": 1024576
+  }
+}
+```
 
 ## SEO Metadata
 
