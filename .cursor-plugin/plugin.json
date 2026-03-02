@@ -1,0 +1,11 @@
+{
+  "name": "helpcenter-skill",
+  "description": "Manage help center articles via the Help.Center API - create, update, publish, and organize knowledge base content.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Microdot Company"
+  },
+  "repository": "https://github.com/microdotcompany/helpcenter-skill",
+  "license": "MIT",
+  "keywords": ["help-center", "knowledge-base", "documentation", "articles", "api", "help-center-api"]
+}
