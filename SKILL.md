@@ -170,6 +170,13 @@ Authorization: Bearer $HC_API_KEY
 | Upload image | POST | `/v0/centers/:centerId/articles/images` |
 | Get center info | GET | `/v0/centers/:centerId` |
 | Count articles | GET | `/v0/centers/:centerId/articles/count` |
+| Get published translation | GET | `/v0/centers/:centerId/articles/:articleId/translations/:language` |
+| Get draft translation | GET | `/v0/centers/:centerId/articles/:articleId/translations/:language/draft` |
+| Update translation draft | PATCH | `/v0/centers/:centerId/articles/:articleId/translations/:language/draft` |
+| Update translation metadata | PATCH | `/v0/centers/:centerId/articles/:articleId/translations/:language/metadata` |
+| Publish translation | POST | `/v0/centers/:centerId/articles/:articleId/translations/:language/publish` |
+| Unpublish translation | POST | `/v0/centers/:centerId/articles/:articleId/translations/:language/unpublish` |
+| Delete translation | DELETE | `/v0/centers/:centerId/articles/:articleId/translations/:language` |
 
 ## Content Writing Guidelines
 
@@ -249,6 +256,77 @@ The response will include the image URL to use in your article HTML:
     "size": 1024576
   }
 }
+```
+
+## Translations
+
+Centers can have additional languages configured. Use the Get center info endpoint to check `additional_languages` for available language codes (e.g., `de`, `fr`, `es`).
+
+### Important Rules for Translations
+
+1. **The default language article must be published first.** You cannot publish a translation until the root article is published. The API will return a `400 root_not_published` error if you try.
+2. **Translations are per-article.** Each article can have independent translations for each configured language.
+3. **Translation URLs use a path prefix, not a query param.** A German translation URL looks like `https://domain.help.center/de/article/123-slug`, not `?language=de`.
+
+### When the user wants to TRANSLATE an article
+
+1. **Check available languages** on the center:
+   ```bash
+   curl -s -X GET \
+     -H "Authorization: Bearer $HC_API_KEY" \
+     "https://api.help.center/v0/centers/$HC_CENTER_ID"
+   ```
+   The response includes `additional_languages` (e.g., `["de", "fr"]`).
+
+2. **Set the translation draft content**:
+   ```bash
+   curl -s -X PATCH \
+     -H "Authorization: Bearer $HC_API_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "title": "Translated Title",
+       "html": "<p>Translated content</p>"
+     }' \
+     "https://api.help.center/v0/centers/$HC_CENTER_ID/articles/ARTICLE_ID/translations/LANGUAGE/draft"
+   ```
+
+3. **Check that the root article is published.** The API will reject translation publishing with a `400 root_not_published` error if the default language article isn't published yet. If it's not published, **warn the user** and ask if they'd like to publish the root article first before proceeding.
+
+4. **Publish the translation**:
+   ```bash
+   curl -s -X POST \
+     -H "Authorization: Bearer $HC_API_KEY" \
+     "https://api.help.center/v0/centers/$HC_CENTER_ID/articles/ARTICLE_ID/translations/LANGUAGE/publish"
+   ```
+
+### Updating translation metadata (slug, SEO):
+```bash
+curl -s -X PATCH \
+  -H "Authorization: Bearer $HC_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "slug": "translated-slug",
+    "seo": {
+      "metaTitle": "Translated SEO Title",
+      "metaDesc": "Translated SEO Description"
+    }
+  }' \
+  "https://api.help.center/v0/centers/$HC_CENTER_ID/articles/ARTICLE_ID/translations/LANGUAGE/metadata"
+```
+
+### Unpublishing a translation:
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer $HC_API_KEY" \
+  "https://api.help.center/v0/centers/$HC_CENTER_ID/articles/ARTICLE_ID/translations/LANGUAGE/unpublish"
+```
+
+### Deleting a translation entirely:
+Removes both draft and published content for that language.
+```bash
+curl -s -X DELETE \
+  -H "Authorization: Bearer $HC_API_KEY" \
+  "https://api.help.center/v0/centers/$HC_CENTER_ID/articles/ARTICLE_ID/translations/LANGUAGE"
 ```
 
 ## SEO Metadata
