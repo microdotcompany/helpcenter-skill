@@ -2,16 +2,29 @@
 name: helpcenter
 description: >
   When the user wants to create, update, read, or manage help center articles
-  via the Help.Center API. Use when the user says "write a help article",
-  "update the docs", "publish an article", "add to the help center", "create a
-  knowledge base article", "edit the getting started guide", or mentions
-  Help.Center, help articles, or knowledge base content management. Also use
-  when the user wants to search existing articles, manage drafts, change
-  categories, or publish/unpublish content.
+  or customer conversations via the Help.Center API. Use when the user says
+  "write a help article", "update the docs", "publish an article", "add to the
+  help center", "create a knowledge base article", "edit the getting started
+  guide", or mentions Help.Center, help articles, or knowledge base content
+  management. Also use when the user says "reply to this customer", "draft a
+  reply", "list open conversations", "assign this conversation", "add a note
+  to the conversation", or mentions the Help.Center inbox, customer support
+  conversations, customer replies, or internal discussion threads.
 metadata:
-  version: 1.0.0
+  version: 1.1.0
   author: Microdot Company
 ---
+
+# Help.Center API
+
+Manage help center articles and customer conversations through the Help.Center API.
+
+The API has two halves:
+
+- **Article Management** — create, read, update, publish, and translate help center articles. Organize by category and upload images.
+- **Conversation Management** — read inbox conversations, draft and send replies to customers, post internal discussion notes, and update conversation status or assignee.
+
+The two halves compose well: when answering a customer, search articles first, draft a reply that references the relevant article, and let the user review before sending.
 
 # Help.Center Article Management
 
@@ -27,6 +40,9 @@ Before making any API calls, you need two pieces of information from the user:
      - `content.write` - Required for creating/updating articles, drafts, categories, and uploading images
      - `content.publish` - Required for publishing/unpublishing articles and translations
      - `content.delete` - Required for deleting articles, categories, or translations
+     - `conversation.read` - Required for listing/reading conversations, messages, discussion, and drafts
+     - `conversation.write` - Required for updating conversation status/assignee, editing drafts, and posting discussion entries
+     - `conversation.reply` - Required for sending replies to customers (POST `/reply` and POST `/draft/send`)
 2. **Center ID** - Found on the same page
 
 If the user hasn't provided these, ask for them before proceeding. Store them as environment variables for the session:
@@ -1033,3 +1049,862 @@ When writing help center articles:
 | Publish translation         | POST   | `/v0/centers/:centerId/articles/:articleId/translations/:lang/publish`   | publish |
 | Unpublish translation       | POST   | `/v0/centers/:centerId/articles/:articleId/translations/:lang/unpublish` | publish |
 | Delete translation          | DELETE | `/v0/centers/:centerId/articles/:articleId/translations/:lang`           | delete  |
+
+# Help.Center Conversation Management
+
+Manage customer support conversations through the Help.Center API. Supports listing and reading conversations, drafting replies, sending replies to customers, posting internal discussion entries, and updating conversation status or assignee.
+
+## Conversation Concepts
+
+### What is a Conversation?
+
+A conversation is a thread of messages between a customer (the **contact**) and one or more agents at the help center. Conversations are identified by both a Mongo `id` and a per-center `number`. The API uses `id`.
+
+### Conversation Channels
+
+A conversation's `from` field indicates the channel it originated on:
+
+| `from`     | Channel                                              |
+| ---------- | ---------------------------------------------------- |
+| `email`    | Customer sent an email to the support address.       |
+| `widget`   | Customer chatted via the embedded help.center widget. |
+| `website`  | Customer interacted via the website (e.g. AI search). |
+
+**Read endpoints work for all channels.** You can list, filter, and read messages and discussion on widget and website conversations exactly as you would on email conversations.
+
+**Reply is delivered by email, regardless of channel.** The reply API (`POST /reply` and `POST /draft/send`) sends an email to the customer. For email-originating conversations this is the natural thread continuation. For widget and website conversations, the API looks for an email address attached to the conversation (on the linked `contact` or in conversation `metaData`) and replies there.
+
+If no email address can be resolved from any source — envelope history, draft, contact, or metaData — the reply returns `400 missing_recipient`. Some widget/website conversations don't have an associated email (anonymous chat) and so cannot be replied to via this API.
+
+Each conversation has:
+
+- A list of **messages** — the visible thread, including inbound (`role: user`) and outbound (`role: agent`) emails, plus AI replies (`role: ai`) and system entries.
+- A **discussion** — a separate, internal-only thread used by the team to coordinate on the conversation. Customers never see the discussion.
+- An optional **draft** — a single in-progress reply (content + envelope) stored on the conversation. Editing the draft never sends anything to the customer.
+- **Status** (`open`, `pending`, `closed`), **assignee** (a user on the center), and a **contact** (the customer).
+
+### Status Values
+
+| Status    | Meaning                                                                |
+| --------- | ---------------------------------------------------------------------- |
+| `open`    | New or active conversation that needs attention.                       |
+| `pending` | In progress — being worked on but not closed.                          |
+| `closed`  | Resolved.                                                              |
+
+Only these three status values are accepted on PATCH. Any other value returns `400 invalid_status`.
+
+### Reply vs Discussion
+
+- A **reply** (POST `/conversations/:id/reply`) sends an email to the customer. This is an external side effect — always confirm with the user before calling it.
+- A **discussion entry** (POST `/conversations/:id/discussion`) is internal-only. Nothing leaves the system. Use it for notes, context, and team coordination.
+
+These are intentionally separate scopes: `conversation.reply` for sending; `conversation.write` for everything internal (drafts, discussion, status, assignee).
+
+### Mentions
+
+Discussion entries can mention specific team members. Mentioned users receive an email and Slack notification.
+
+There are two ways to mention users when posting a discussion entry:
+
+1. **Shorthand placeholders** (recommended): write `{{@USER_ID}}` in the `content` HTML. The server resolves each placeholder to the proper mention markup and uses the user's display name.
+
+   ```json
+   {
+     "content": "<p>Pinging {{@65c2d3e4f5060708091011bb}} — can you take a look at this checkout bug?</p>"
+   }
+   ```
+
+2. **Explicit list**: pass a `mentions` array of user ids alongside the content. The server attaches notifications to all of them, even if the user ids don't appear inline in the HTML.
+
+   ```json
+   {
+     "content": "<p>FYI to the team on this thread.</p>",
+     "mentions": ["65c2d3e4f5060708091011bb", "65c2d3e4f5060708091011cc"]
+   }
+   ```
+
+Both approaches can be combined — the server dedupes by user id. To get valid user ids for mentions, call `GET /v0/centers/:centerId/users`.
+
+A discussion entry's response includes a `mentions` array of `{id, name, email}` for every user that was notified, so consumers don't have to parse HTML.
+
+**Filtering conversations by mention.** `GET /conversations?mentioned=USER_ID` returns conversations where that user has been mentioned in discussion. Pass `mentioned=me` to filter by the API key's owner. Repeat the param for OR semantics across multiple users.
+
+### Draft Model
+
+Drafts on conversations work differently from article drafts:
+
+- Each conversation has **at most one** draft (a single in-progress reply), stored directly on the conversation.
+- The draft holds `content` (HTML reply body) and `envelope` (`to`, `cc`, `bcc`).
+- Drafts do not have a publish step — to send, call POST `/conversations/:id/draft/send`. This sends the draft as a reply and clears it atomically.
+- Editing the draft is safe and has no external effect.
+
+### Messages, Discussion, and Truncation
+
+Conversation message bodies can be long (legacy email threads, attachments, quoted history). Discussion entries are typically shorter — internal notes from teammates. The truncation strategy reflects this:
+
+- **`GET /conversations/:id` returns the full conversation**: metadata, draft, **all messages**, and **all discussion entries**, all sorted descending by `created_at` (newest first). Each message and discussion entry has its `html` and `text` truncated at **2000 characters**. When truncated, the entry includes `truncated: true` and a `content_length` object showing the real lengths.
+- **`GET /conversations` (list)** inlines the **5 most recent messages** per conversation (newest first, truncated) and the **full discussion thread** (truncated). `messages_has_more: true` indicates older messages exist — fetch the full conversation via `GET /conversations/:id` for those. Discussion is small enough that it is included in full on list responses too.
+- **To read the full body of a truncated message or discussion entry, fetch it by id**: `GET /conversations/:id/messages/:messageId`. The single-entry response is never truncated. The same endpoint returns both messages and discussion entries (they live in the same model).
+
+**When to fetch by id:** anytime an entry has `truncated: true` and you need to read the parts that were cut off. Always do this before composing a reply — replies written off a truncated quote tend to miss what the customer actually said.
+
+### Message IDs
+
+Every message has two identifiers:
+
+- `id` — the Mongo `_id` of the message. Use this when you got the id from a list response.
+- `message_id` — the RFC 5322 email Message-ID (a string like `<abc@email.amazonses.com>`). Present on email messages only.
+
+The path parameter `:messageId` accepts **either**. The server tries to parse it as a Mongo ObjectId first; if that fails it falls back to looking up by `message_id`. URL-encode the email Message-ID (it contains `<`, `>`, and `@`).
+
+### Pagination
+
+Conversation list endpoints use cursor pagination identical to articles:
+
+| Parameter        | Description                                                            |
+| ---------------- | ---------------------------------------------------------------------- |
+| `limit`          | Items per page. Conversations: 1–100, default 50. Messages and discussion: 1–50, default 20. |
+| `starting_after` | Cursor: id to start after (forward pagination)                         |
+| `ending_before`  | Cursor: id to end before (backward pagination)                         |
+
+Use `has_more` and the last item's `id` to page forward.
+
+## Conversation Response Shapes
+
+### Conversation Object
+
+```json
+{
+  "object": "conversation",
+  "id": "65f1a2b3c4d5e6f708091011",
+  "number": 1247,
+  "center_id": "65a2b3c4d5e6f70809101112",
+  "status": "open",
+  "from": "email",
+  "contact": {
+    "object": "contact",
+    "id": "65b1c2d3e4f50607080910aa",
+    "name": "Jane Doe",
+    "email": "jane@example.com",
+    "avatar": "https://www.gravatar.com/avatar/..."
+  },
+  "assignee": {
+    "object": "user",
+    "id": "65c2d3e4f5060708091011bb",
+    "name": "Agent Smith",
+    "email": "smith@company.com"
+  },
+  "unread": true,
+  "message_count": 12,
+  "discussion_count": 3,
+  "last_message_at": "2026-05-13T14:22:00.000Z",
+  "draft": {
+    "content": "<p>Thanks for reaching out...</p>",
+    "envelope": {
+      "to": { "address": "jane@example.com" },
+      "cc": [],
+      "bcc": []
+    }
+  },
+  "messages": [
+    /* On GET /conversations/:id: all messages, newest first, each truncated at 2000 chars.
+       On GET /conversations: only the 5 most recent (newest first, truncated). */
+  ],
+  "messages_has_more": false,
+  "discussion": [
+    /* Full discussion thread, newest first, each entry truncated at 2000 chars.
+       Present on both GET /conversations/:id and GET /conversations. */
+  ],
+  "created_at": "2026-05-10T09:14:00.000Z",
+  "updated_at": "2026-05-13T14:22:00.000Z"
+}
+```
+
+Notes:
+
+- `assignee` is `null` when the conversation is unassigned.
+- `draft` is `null` when no draft exists.
+- `from` indicates the originating channel and is one of `email`, `widget`, or `website`. Read endpoints work for all three; reply is email-only delivery (see Conversation Channels above).
+- **On `GET /conversations/:id` (single conversation):** `messages` contains the full thread, `discussion` contains the full discussion. Both are sorted newest-first and each entry is truncated at 2000 chars. `messages_has_more` is always `false` on this endpoint.
+- **On `GET /conversations` (list):** each conversation includes the latest 5 `messages` (newest first, truncated) and the **full** `discussion` thread (truncated). `messages_has_more` is `true` when older messages exist beyond the 5 inlined — fetch the full conversation via `GET /conversations/:id` to read them.
+- `message_count` and `discussion_count` are the full thread counts, regardless of how many entries are inlined.
+
+### Message Object
+
+Returned by list endpoints (truncated when content exceeds 2000 characters):
+
+```json
+{
+  "object": "message",
+  "id": "65f1a2b3c4d5e6f708091020",
+  "message_id": "<abc123@email.amazonses.com>",
+  "role": "user",
+  "html": "<p>Hi, I'm having trouble with...</p>",
+  "text": "Hi, I'm having trouble with...",
+  "truncated": false,
+  "envelope": {
+    "from": { "name": "Jane Doe", "address": "jane@example.com" },
+    "to": [{ "address": "support@company.help.center" }],
+    "cc": [],
+    "bcc": []
+  },
+  "subject": "Issue with checkout",
+  "attachments": [
+    { "filename": "screenshot.png", "url": "https://cdn.help.center/..." }
+  ],
+  "bounced": false,
+  "created_at": "2026-05-10T09:14:00.000Z"
+}
+```
+
+When truncated:
+
+```json
+{
+  "object": "message",
+  "id": "...",
+  "html": "<p>...first 2000 chars...</p>",
+  "text": "...first 2000 chars...",
+  "truncated": true,
+  "content_length": { "html": 18432, "text": 4221 },
+  "...": "..."
+}
+```
+
+`role` is one of:
+
+| Role     | Meaning                                                                  |
+| -------- | ------------------------------------------------------------------------ |
+| `user`   | Inbound message from the customer (email received).                      |
+| `agent`  | Outbound message from a human agent (email sent via reply).              |
+| `ai`     | AI-generated reply (common on `widget` and `website` conversations).     |
+| `system` | System-generated message.                                                |
+
+**Discussion entries** use the same shape with `role: "note"` (for human-posted entries) or `role: "system"`. They also include a `mentions` array listing every user that was notified:
+
+```json
+{
+  "object": "message",
+  "id": "...",
+  "role": "note",
+  "html": "<p>Pinging <span class=\"mention\" data-id=\"USER_ID\">@Alice</span> on this</p>",
+  "text": "Pinging @Alice on this",
+  "mentions": [
+    { "id": "65c2d3e4f5060708091011bb", "name": "Alice Wong", "email": "alice@company.com" }
+  ],
+  "envelope": { "from": {...}, "to": [...], "cc": [], "bcc": [] },
+  "created_at": "..."
+}
+```
+
+The `mentions` array is only present on discussion entries, not on customer-facing messages.
+
+### Draft Response
+
+```json
+{
+  "object": "draft",
+  "conversation_id": "65f1a2b3c4d5e6f708091011",
+  "content": "<p>Thanks for reaching out...</p>",
+  "envelope": {
+    "to": { "address": "jane@example.com" },
+    "cc": [{ "address": "manager@example.com" }],
+    "bcc": []
+  },
+  "updated_at": "2026-05-13T14:25:00.000Z"
+}
+```
+
+When no draft exists, GET `/draft` returns `null` for `content` and the resolved envelope defaults (see "Recipient and Subject Resolution" below).
+
+### List Response
+
+Same shape as articles:
+
+```json
+{
+  "object": "list",
+  "data": [
+    /* array of conversation, message, or discussion objects */
+  ],
+  "has_more": false,
+  "count": 10,
+  "url": "/api/v0/centers/CENTER_ID/conversations"
+}
+```
+
+### Count Response
+
+```json
+{
+  "object": "count",
+  "open": 14,
+  "pending": 3,
+  "closed": 421,
+  "total": 438,
+  "url": "/api/v0/centers/CENTER_ID/conversations/count"
+}
+```
+
+### Error Response
+
+Errors use the same shape as the article API. Conversation-specific error codes:
+
+| HTTP Status | Code                       | Meaning                                                                       |
+| ----------- | -------------------------- | ----------------------------------------------------------------------------- |
+| 400         | `invalid_status`           | Status must be one of `open`, `pending`, `closed`.                            |
+| 400         | `invalid_assignee`         | Assignee user id is not a member of this center.                              |
+| 400         | `invalid_mention`          | One or more mention user ids do not belong to this center.                    |
+| 400         | `missing_recipient`        | A reply was attempted but no `to` address could be resolved.                  |
+| 400         | `missing_content`          | Reply or discussion entry had no `content`.                                   |
+| 400         | `empty_draft`              | POST `/draft/send` was called but the stored draft is empty.                  |
+| 500         | `channel_not_configured`   | The center has no support channel configured to send from.                    |
+| 502         | `email_send_failed`        | The upstream email provider rejected the send.                                |
+
+## Recipient and Subject Resolution
+
+When sending a reply (POST `/reply` or POST `/draft/send`), the server resolves `to`, `cc`, `bcc`, and `subject` automatically if the request omits them. The resolution mirrors the dashboard reply editor's behavior exactly and works for all channel types — for widget and website conversations, the fallback to `contact.email` and `metaData.email` is what makes email reply possible.
+
+**Precedence (highest wins):**
+
+1. Field explicitly supplied in the request body.
+2. Field present on the conversation's stored draft.
+3. Derived from the conversation history (see below).
+4. Fallback default.
+
+### `to` Resolution
+
+The first match wins:
+
+1. Override from request body.
+2. `draft.envelope.to`.
+3. The `envelope.from` of the most recent **inbound** (`role: user`) message.
+4. The first recipient (`envelope.to[0]`) of the most recent **outbound** (`role: agent`) message (used when there are no inbound messages — e.g., conversations started outbound). Recent is used so the reply follows where the thread currently goes rather than where it started.
+5. `{ name: contact.name, address: contact.email }`.
+6. `{ address: metadata.email }` if present.
+
+If none of these yield an address, the request fails with `400 missing_recipient`.
+
+### `cc` Resolution
+
+1. Override from request body.
+2. `draft.envelope.cc`.
+3. Derived from the most recent inbound message: take its `envelope.to` plus `envelope.cc`, then **exclude** the resolved primary `to` address and the center's own send addresses (`defaultAddress`, `customAddress`). Deduplicate.
+4. Empty array.
+
+### `bcc` Resolution
+
+1. Override from request body.
+2. `draft.envelope.bcc`.
+3. Empty array. **There is no default BCC.** The server never auto-populates BCC.
+
+### Subject Resolution
+
+Computed at send time. The conversation's stored draft does **not** carry a subject; supply one explicitly if you want to override.
+
+1. Override from request body.
+2. If there is at least one inbound message: `` `Re : ${lastInboundSubject}` ``.
+3. Else if there is at least one outbound message: `lastOutboundSubject` (no `Re :` prefix).
+4. Else: `` `Question from ${to.address}` ``.
+
+**Quirk to be aware of:** the `Re :` prefix has a space before the colon, and the API does **not** deduplicate existing `Re:` prefixes. A long thread can produce `Re : Re: Re: ...` subjects. This matches the dashboard exactly. Pass an explicit `subject` if you need different behavior.
+
+### `from` (Sender)
+
+The sender address is always resolved server-side from the center's configured support channel. It cannot be overridden via the API. Centers must have at least one verified channel configured, or the API returns `500 channel_not_configured`.
+
+### Previewing a Reply (`dry_run`)
+
+Both `POST /reply` and `POST /draft/send` accept a `dry_run` flag. When set, the server runs the full resolver (using any overrides you pass and any stored draft envelope), returns the resolved envelope, subject, and references — and does **not** send an email or modify the conversation. Use it to verify recipients before committing to a send.
+
+`dry_run` may be passed either as a query string (`?dry_run=true` or `?dry_run=1`) or in the JSON body (`{"dry_run": true}`).
+
+In dry-run mode:
+- `content` is **not required** on `/reply`. If omitted, the preview's `content` field is `null`.
+- An empty stored draft does **not** raise `400 empty_draft` on `/draft/send` — the preview returns regardless.
+- The stored draft is **not** cleared by `/draft/send` dry runs.
+- Resolver errors (e.g. `400 missing_recipient`, `500 channel_not_configured`) still surface the same way.
+
+**Response shape (HTTP 200):**
+
+```json
+{
+  "object": "reply_preview",
+  "envelope": {
+    "from":  { "name": "Acme Support", "address": "support@acme.com" },
+    "to":    [{ "name": "Jane",        "address": "jane@example.com" }],
+    "cc":    [{ "address": "manager@example.com" }],
+    "bcc":   []
+  },
+  "subject": "Re : Issue with checkout",
+  "references": ["<msg1@email.amazonses.com>", "<msg2@email.amazonses.com>"],
+  "content": "<p>Hi Jane...</p>"
+}
+```
+
+The `object` field distinguishes a preview from a real send (`"reply"`).
+
+**When to use it:**
+- Before sending to confirm the resolved recipients match what the user expects, especially on widget/website conversations where the address comes from `contact` or `metaData`.
+- To debug `missing_recipient` errors — the preview will return the same error without side effects.
+- As a CI safety check in integrations that compose replies programmatically.
+
+## Workflow
+
+### When the user wants to LIST or TRIAGE conversations
+
+1. **List open conversations**:
+
+   ```bash
+   curl -s -X GET \
+     -H "Authorization: Bearer $HC_API_KEY" \
+     "https://api.help.center/v0/centers/$HC_CENTER_ID/conversations?status=open&limit=20"
+   ```
+
+2. **Filter further** by assignee, contact, search term, or date range. See "List Conversations" below for the full parameter list.
+
+3. **Read a specific conversation.** The single-conversation GET returns metadata, the draft, the full messages thread, and the full discussion thread (all newest-first, each entry truncated at 2000 chars):
+
+   ```bash
+   curl -s -X GET \
+     -H "Authorization: Bearer $HC_API_KEY" \
+     "https://api.help.center/v0/centers/$HC_CENTER_ID/conversations/CONVERSATION_ID"
+   ```
+
+   This is a single round trip — no further calls are needed for most triage and reply flows.
+
+4. **Fetch the full body of a truncated message** before composing a reply. If the latest inbound message has `truncated: true`, fetch it by id:
+
+   ```bash
+   curl -s -X GET \
+     -H "Authorization: Bearer $HC_API_KEY" \
+     "https://api.help.center/v0/centers/$HC_CENTER_ID/conversations/CONVERSATION_ID/messages/MESSAGE_ID"
+   ```
+
+### When the user wants to REPLY to a customer
+
+1. **Read the conversation thread first.** Call `GET /conversations/:id` to get the conversation, the draft, the full messages thread, and the full discussion. If the latest inbound message has `truncated: true`, fetch it by id for the full body before composing. Don't write a reply off a truncated quote.
+
+2. **Search articles** if the question may be answerable from an existing help article. Reference the article inline in the reply.
+
+3. **Save a draft first.** Write the reply as a draft so the user can review before sending:
+
+   ```bash
+   curl -s -X PATCH \
+     -H "Authorization: Bearer $HC_API_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "content": "<p>Hi Jane,</p><p>Thanks for reaching out...</p>"
+     }' \
+     "https://api.help.center/v0/centers/$HC_CENTER_ID/conversations/CONVERSATION_ID/draft"
+   ```
+
+   The draft is stored on the conversation. Editing the draft has no external effect.
+
+4. **Preview the resolved recipients with `dry_run`.** Confirm the server will send to the address the user expects — this is especially important for widget/website conversations where the recipient comes from `contact` or `metaData` rather than email envelope history:
+
+   ```bash
+   curl -s -X POST \
+     -H "Authorization: Bearer $HC_API_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{"dry_run": true}' \
+     "https://api.help.center/v0/centers/$HC_CENTER_ID/conversations/CONVERSATION_ID/draft/send"
+   ```
+
+   The response includes the resolved `envelope.to`, `cc`, `bcc`, and `subject`. Nothing is sent and the draft is not cleared.
+
+5. **Confirm with the user before sending.** Sending a reply emails the customer — this is an external side effect that cannot be undone.
+
+6. **Send the draft** (server resolves `to`, `cc`, `bcc`, and `subject` from conversation history and the draft envelope):
+
+   ```bash
+   curl -s -X POST \
+     -H "Authorization: Bearer $HC_API_KEY" \
+     "https://api.help.center/v0/centers/$HC_CENTER_ID/conversations/CONVERSATION_ID/draft/send"
+   ```
+
+   Or, send a reply directly without staging a draft (only when the user has already approved exactly what will be sent):
+
+   ```bash
+   curl -s -X POST \
+     -H "Authorization: Bearer $HC_API_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "content": "<p>Hi Jane,</p><p>Thanks for reaching out...</p>"
+     }' \
+     "https://api.help.center/v0/centers/$HC_CENTER_ID/conversations/CONVERSATION_ID/reply"
+   ```
+
+### When the user wants to add an INTERNAL NOTE
+
+Use the discussion endpoint. Nothing is sent to the customer.
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer $HC_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "<p>This looks like the same bug from last week.</p>"
+  }' \
+  "https://api.help.center/v0/centers/$HC_CENTER_ID/conversations/CONVERSATION_ID/discussion"
+```
+
+**To mention a specific teammate** and notify them via email and Slack, first list the center's users to get their ids:
+
+```bash
+curl -s -X GET \
+  -H "Authorization: Bearer $HC_API_KEY" \
+  "https://api.help.center/v0/centers/$HC_CENTER_ID/users"
+```
+
+Then post the note using `{{@USER_ID}}` placeholders in the content (the server resolves them and triggers notifications):
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer $HC_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "<p>Hey {{@65c2d3e4f5060708091011bb}}, this looks like the issue from last week. Can you take a look?</p>"
+  }' \
+  "https://api.help.center/v0/centers/$HC_CENTER_ID/conversations/CONVERSATION_ID/discussion"
+```
+
+### When the user wants to FIND conversations they were mentioned in
+
+```bash
+curl -s -X GET \
+  -H "Authorization: Bearer $HC_API_KEY" \
+  "https://api.help.center/v0/centers/$HC_CENTER_ID/conversations?mentioned=me&status=open"
+```
+
+Pass an explicit user id (`?mentioned=USER_ID`) for someone other than the key owner.
+
+### When the user wants to ASSIGN or CHANGE STATUS
+
+```bash
+curl -s -X PATCH \
+  -H "Authorization: Bearer $HC_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "pending",
+    "assignee": "USER_ID"
+  }' \
+  "https://api.help.center/v0/centers/$HC_CENTER_ID/conversations/CONVERSATION_ID"
+```
+
+Send `"assignee": null` to unassign.
+
+## Important Rules for Conversations
+
+1. **Always confirm before sending a reply.** POST `/reply` and POST `/draft/send` email the customer immediately. This is unlike publishing an article — there is no draft state on the customer's side and no undo. Default to staging the reply as a draft and asking the user to confirm.
+
+2. **Read before replying.** Fetch the conversation before composing — `GET /conversations/:id` returns the full messages and discussion threads in one call. If the most recent inbound message has `truncated: true`, fetch it by id for the full body. Replies written off a truncated quote tend to miss what the customer actually said.
+
+   For widget/website conversations, also check that an email address is available on the `contact` or in `metaData` before attempting to reply — anonymous chats can't be replied to via email and will return `400 missing_recipient`.
+
+3. **Discussion is internal-only.** Use POST `/discussion` for notes, never POST `/reply`. Be explicit with the user about which one you are about to call.
+
+4. **Drafts are safe to overwrite.** Each conversation has at most one draft. PATCH replaces fields you supply and leaves others alone. To clear the draft entirely, use POST `/draft/discard`.
+
+5. **Don't change status without being asked.** Changing a conversation to `closed` or `pending` is a deliberate action — only do it when the user explicitly requests it.
+
+6. **Subject quirks.** The auto-resolved subject uses `Re : ` (with a space) and does not strip existing `Re:` prefixes. If the user cares about clean subjects, pass `subject` explicitly in the request body.
+
+7. **Use pagination.** Conversation lists default to 50 items per page; messages and discussion default to 20. Check `has_more` and use `starting_after` with the last item's `id` for the next page.
+
+8. **Compose with articles.** When answering a customer, search the article API first. If a relevant article exists, reference it in the reply (link to its public URL) instead of restating its content.
+
+## API Endpoint Reference (Conversations)
+
+### List Conversations
+
+```
+GET /v0/centers/:centerId/conversations
+```
+
+Scope: `conversation.read`
+
+**Query Parameters:**
+
+| Parameter        | Description                                                                                          |
+| ---------------- | ---------------------------------------------------------------------------------------------------- |
+| `status`         | Filter by status: `open`, `pending`, or `closed`. Repeat for multiple.                               |
+| `assignee`       | Filter by assignee user id. Pass `unassigned` to find unassigned.                                    |
+| `contact`        | Filter by contact id.                                                                                |
+| `mentioned`      | Filter to conversations where this user was mentioned in discussion. Pass `me` for the key's owner, or a user id. Repeat for OR semantics. |
+| `search`         | Full-text search across conversation messages and metadata.                                          |
+| `unread`         | `true` to return only unread conversations.                                                          |
+| `created_after`  | ISO 8601 timestamp — return conversations created on or after this time.                             |
+| `created_before` | ISO 8601 timestamp — return conversations created on or before this time.                            |
+| `limit`          | Items per page (1–100, default: 50).                                                                 |
+| `starting_after` | Cursor: conversation id to start after.                                                              |
+| `ending_before`  | Cursor: conversation id to end before.                                                               |
+
+**Example:**
+
+```bash
+curl -s -X GET \
+  -H "Authorization: Bearer $HC_API_KEY" \
+  "https://api.help.center/v0/centers/$HC_CENTER_ID/conversations?status=open&unread=true&limit=20"
+```
+
+### Count Conversations
+
+```
+GET /v0/centers/:centerId/conversations/count
+```
+
+Scope: `conversation.read`
+
+Returns counts per status, honoring the same filters as the list endpoint (except cursor params).
+
+**Query Parameters:** Same as List Conversations, minus pagination.
+
+**Response:**
+
+```json
+{
+  "object": "count",
+  "open": 14,
+  "pending": 3,
+  "closed": 421,
+  "total": 438,
+  "url": "/api/v0/centers/CENTER_ID/conversations/count"
+}
+```
+
+### Get Conversation
+
+```
+GET /v0/centers/:centerId/conversations/:conversationId
+```
+
+Scope: `conversation.read`
+
+Returns the full conversation object: metadata, `contact`, `assignee`, `draft`, the full `messages` thread, and the full `discussion` thread. Both threads are sorted newest-first and each entry is truncated at 2000 characters.
+
+Reading a conversation via the API does **not** mark it as read.
+
+### Update Conversation
+
+```
+PATCH /v0/centers/:centerId/conversations/:conversationId
+```
+
+Scope: `conversation.write`
+
+**Request Body** (at least one field required):
+
+```json
+{
+  "status": "pending",
+  "assignee": "USER_ID"
+}
+```
+
+| Field      | Description                                                              |
+| ---------- | ------------------------------------------------------------------------ |
+| `status`   | New status. One of `open`, `pending`, `closed`.                          |
+| `assignee` | User id to assign. Pass `null` to unassign. User must belong to center.  |
+
+Returns the updated conversation.
+
+### Get Message
+
+```
+GET /v0/centers/:centerId/conversations/:conversationId/messages/:messageId
+```
+
+Scope: `conversation.read`
+
+Returns a single message or discussion entry with its full untruncated `html` and `text`. Both messages and discussion entries live in the same model and are looked up by the same endpoint. The `:messageId` parameter accepts either the Mongo `id` or the email `message_id` (URL-encoded).
+
+**Example — fetch by Mongo id:**
+
+```bash
+curl -s -X GET \
+  -H "Authorization: Bearer $HC_API_KEY" \
+  "https://api.help.center/v0/centers/$HC_CENTER_ID/conversations/CONV_ID/messages/65f1a2b3c4d5e6f708091020"
+```
+
+**Example — fetch by email Message-ID:**
+
+```bash
+curl -s -X GET \
+  -H "Authorization: Bearer $HC_API_KEY" \
+  "https://api.help.center/v0/centers/$HC_CENTER_ID/conversations/CONV_ID/messages/%3Cabc123%40email.amazonses.com%3E"
+```
+
+### Send Reply
+
+```
+POST /v0/centers/:centerId/conversations/:conversationId/reply
+```
+
+Scope: `conversation.reply`
+
+Sends an email reply to the customer and appends the sent message to the conversation. This has external side effects — always confirm with the user first.
+
+**Request Body:**
+
+```json
+{
+  "content": "<p>Hi Jane,</p><p>Thanks for reaching out...</p>",
+  "to": [{ "address": "jane@example.com" }],
+  "cc": [{ "address": "manager@example.com" }],
+  "bcc": [],
+  "subject": "Re : Issue with checkout"
+}
+```
+
+| Field     | Required | Description                                                                       |
+| --------- | -------- | --------------------------------------------------------------------------------- |
+| `content` | Yes (unless `dry_run`) | HTML reply body.                                                       |
+| `to`      | No       | Recipient(s). If omitted, resolved from conversation history (see resolution rules above). |
+| `cc`      | No       | CC recipient(s). If omitted, resolved from conversation history.                  |
+| `bcc`     | No       | BCC recipient(s). If omitted, empty.                                              |
+| `subject` | No       | Email subject. If omitted, derived from the last message (`Re : <subject>`).      |
+| `dry_run` | No       | If `true` (also accepted as `?dry_run=true` query param), the server returns the resolved envelope and subject as `{ "object": "reply_preview", ... }` and does **not** send. See "Previewing a Reply" above. |
+
+Returns the appended message object and the updated conversation. When `dry_run` is set, returns a `reply_preview` instead.
+
+### Get Draft
+
+```
+GET /v0/centers/:centerId/conversations/:conversationId/draft
+```
+
+Scope: `conversation.read`
+
+Returns the current draft, or `null` content with resolved envelope defaults if no draft exists.
+
+### Update Draft
+
+```
+PATCH /v0/centers/:centerId/conversations/:conversationId/draft
+```
+
+Scope: `conversation.write`
+
+Upserts the draft. Only supplied fields are updated; omitted fields are left alone.
+
+**Request Body:**
+
+```json
+{
+  "content": "<p>Hi Jane...</p>",
+  "envelope": {
+    "to": { "address": "jane@example.com" },
+    "cc": [{ "address": "manager@example.com" }],
+    "bcc": []
+  }
+}
+```
+
+| Field             | Description                                                                  |
+| ----------------- | ---------------------------------------------------------------------------- |
+| `content`         | HTML draft body.                                                             |
+| `envelope.to`     | Primary recipient.                                                           |
+| `envelope.cc`     | CC recipients (pass `[]` to clear).                                          |
+| `envelope.bcc`    | BCC recipients (pass `[]` to clear).                                         |
+
+### Discard Draft
+
+```
+POST /v0/centers/:centerId/conversations/:conversationId/draft/discard
+```
+
+Scope: `conversation.write`
+
+Clears the conversation's stored draft entirely.
+
+### Send Draft
+
+```
+POST /v0/centers/:centerId/conversations/:conversationId/draft/send
+```
+
+Scope: `conversation.reply`
+
+Sends the stored draft as a reply, then clears the draft. The server resolves any missing envelope fields and subject using the rules in "Recipient and Subject Resolution". Returns the appended message object and the updated conversation.
+
+Returns `400 empty_draft` if no draft content is set.
+
+**Request Body (optional):**
+
+| Field     | Description                                                                                  |
+| --------- | -------------------------------------------------------------------------------------------- |
+| `dry_run` | If `true` (also accepted as `?dry_run=true` query param), returns a `reply_preview` with the resolved envelope and subject, does **not** send, and does **not** clear the draft. An empty draft does not raise `empty_draft` in dry-run mode. See "Previewing a Reply" above. |
+
+### Post Discussion Entry
+
+```
+POST /v0/centers/:centerId/conversations/:conversationId/discussion
+```
+
+Scope: `conversation.write`
+
+Appends an internal entry to the discussion. Not visible to the customer. Mentioned users are notified via email and Slack.
+
+**Request Body:**
+
+```json
+{
+  "content": "<p>Hey {{@65c2d3e4f5060708091011bb}}, can you take a look?</p>",
+  "mentions": ["65c2d3e4f5060708091011cc"]
+}
+```
+
+| Field      | Required | Description                                                                                                                          |
+| ---------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `content`  | Yes      | HTML discussion body. May include `{{@USER_ID}}` placeholders — the server resolves each to the proper mention markup.               |
+| `mentions` | No       | Array of additional user ids to mention. Combined with users matched from `{{@USER_ID}}` placeholders; deduplicated.                 |
+
+Returns the appended discussion entry, including a resolved `mentions` array of `{id, name, email}` for every user notified.
+
+Returns `400 invalid_mention` if any supplied user id (in `{{@USER_ID}}` or `mentions`) does not belong to this center.
+
+### List Center Users
+
+```
+GET /v0/centers/:centerId/users
+```
+
+Scope: `conversation.read`
+
+Returns the team members on this center. Use this to discover user ids for mentions, assignees, and the `mentioned` filter.
+
+**Response:**
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "object": "user",
+      "id": "65c2d3e4f5060708091011bb",
+      "name": "Alice Wong",
+      "email": "alice@company.com",
+      "avatar": "https://www.gravatar.com/avatar/..."
+    }
+  ],
+  "url": "/api/v0/centers/CENTER_ID/users"
+}
+```
+
+## Conversation Quick Reference
+
+| Action                  | Method | Endpoint                                                                       | Scope |
+| ----------------------- | ------ | ------------------------------------------------------------------------------ | ----- |
+| List conversations      | GET    | `/v0/centers/:centerId/conversations`                                          | read  |
+| Count conversations     | GET    | `/v0/centers/:centerId/conversations/count`                                    | read  |
+| Get conversation        | GET    | `/v0/centers/:centerId/conversations/:conversationId`                          | read  |
+| Update conversation     | PATCH  | `/v0/centers/:centerId/conversations/:conversationId`                          | write |
+| Get message             | GET    | `/v0/centers/:centerId/conversations/:conversationId/messages/:messageId`      | read  |
+| Send reply              | POST   | `/v0/centers/:centerId/conversations/:conversationId/reply`                    | reply |
+| Get draft               | GET    | `/v0/centers/:centerId/conversations/:conversationId/draft`                    | read  |
+| Update draft            | PATCH  | `/v0/centers/:centerId/conversations/:conversationId/draft`                    | write |
+| Discard draft           | POST   | `/v0/centers/:centerId/conversations/:conversationId/draft/discard`            | write |
+| Send draft              | POST   | `/v0/centers/:centerId/conversations/:conversationId/draft/send`               | reply |
+| Post discussion entry   | POST   | `/v0/centers/:centerId/conversations/:conversationId/discussion`               | write |
+| List center users       | GET    | `/v0/centers/:centerId/users`                                                  | read  |
