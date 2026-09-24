@@ -1058,7 +1058,7 @@ Manage customer support conversations through the Help.Center API. Supports list
 
 ### What is a Conversation?
 
-A conversation is a thread of messages between a customer (the **contact**) and one or more agents at the help center. Conversations are identified by both a Mongo `id` and a per-center `number`. The API uses `id`.
+A conversation is a thread of messages between a customer (the **contact**) and one or more agents at the help center. Conversations are identified by both a Mongo `id` and a per-center `number`. The API uses `id` everywhere; when the user refers to a conversation by its human-facing number (e.g. "#422"), resolve it via `GET /conversations/number/:number`, which returns the same shape as `GET /conversations/:id`.
 
 ### Conversation Channels
 
@@ -1899,6 +1899,7 @@ Returns the team members on this center. Use this to discover user ids for menti
 | List conversations      | GET    | `/v0/centers/:centerId/conversations`                                          | read  |
 | Count conversations     | GET    | `/v0/centers/:centerId/conversations/count`                                    | read  |
 | Get conversation        | GET    | `/v0/centers/:centerId/conversations/:conversationId`                          | read  |
+| Get conversation by number | GET | `/v0/centers/:centerId/conversations/number/:number`                           | read  |
 | Update conversation     | PATCH  | `/v0/centers/:centerId/conversations/:conversationId`                          | write |
 | Get message             | GET    | `/v0/centers/:centerId/conversations/:conversationId/messages/:messageId`      | read  |
 | Send reply              | POST   | `/v0/centers/:centerId/conversations/:conversationId/reply`                    | reply |
