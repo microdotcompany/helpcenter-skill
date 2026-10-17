@@ -9,9 +9,11 @@ description: >
   management. Also use when the user says "reply to this customer", "draft a
   reply", "list open conversations", "assign this conversation", "add a note
   to the conversation", or mentions the Help.Center inbox, customer support
-  conversations, customer replies, or internal discussion threads.
+  conversations, customer replies, or internal discussion threads, or wants
+  to create or manage knowledge bases (e.g. a separate one for a mobile app)
+  and their design, SEO, header links or custom code.
 metadata:
-  version: 1.1.0
+  version: 1.2.0
   author: Microdot Company
 ---
 
@@ -21,7 +23,7 @@ Manage help center articles and customer conversations through the Help.Center A
 
 The API has two halves:
 
-- **Article Management** — create, read, update, publish, and translate help center articles. Organize by category and upload images.
+- **Article Management** — create, read, update, publish, and translate help center articles. Organize by category and upload images. A help center can have several **knowledge bases**, each with its own categories, design and SEO.
 - **Conversation Management** — read inbox conversations, draft and send replies to customers, post internal discussion notes, and update conversation status or assignee.
 
 The two halves compose well: when answering a customer, search articles first, draft a reply that references the relevant article, and let the user review before sending.
@@ -39,7 +41,8 @@ Before making any API calls, you need two pieces of information from the user:
      - `content.read` - Required for searching/reading articles, drafts, categories, and center info
      - `content.write` - Required for creating/updating articles, drafts, categories, and uploading images
      - `content.publish` - Required for publishing/unpublishing articles and translations
-     - `content.delete` - Required for deleting articles, categories, or translations
+     - `content.delete` - Required for deleting articles, categories, or translations (and, with `settings.write`, knowledge bases)
+     - `settings.write` - Required for managing knowledge bases and their settings, and for adding languages
      - `conversation.read` - Required for listing/reading conversations, messages, discussion, and drafts
      - `conversation.write` - Required for updating conversation status/assignee, editing drafts, and posting discussion entries
      - `conversation.reply` - Required for sending replies to customers (POST `/reply` and POST `/draft/send`)
@@ -79,6 +82,19 @@ Drafts have three statuses:
 | `published_with_changes` | Published, but the draft has unpublished edits that differ from the live version. |
 
 Use the `status` query parameter on draft endpoints to filter by these states.
+
+### Knowledge Bases
+
+A help center has a **default knowledge base** (the help center itself, served at the site root) and can have **additional knowledge bases**, each served under `/{slug}` on the same site — e.g. `help.acme.com/mobile/article/1234-reset-password`.
+
+- The default knowledge base's id is the string `"default"`; the others have object ids. List them with `GET /knowledge-bases`.
+- Each knowledge base has its **own category tree**. Category endpoints take `knowledge_base`.
+- `visibility` is `public` (on the site, used by the customer-facing AI) or `internal` (team-only: never on the public site, used only by team-facing AI). Internal-only articles have `url: null`.
+- An article can be in **several knowledge bases**, each with its own category. Responses list them in `knowledge_bases` (primary first); `knowledge_base_id` and `category_id` are the primary placement. Its public `url` uses the first public one.
+- Article ids and `slug_id` numbers are unique across the whole help center, so old links keep working when an article moves.
+- **When you omit the knowledge base**: article lists, counts and search cover every knowledge base; creating an article or category puts it in the default one; `GET /articles/categories` returns the default one's tree; updating or deleting a category finds it in whichever tree has it (409 `ambiguous_category` if several do — then pass `knowledge_base`).
+
+Most help centers only have the default knowledge base; then you can ignore all of this.
 
 ### Expand Parameter
 
@@ -129,6 +145,8 @@ Returned by published article endpoints:
   "object": "article",
   "center_id": "center_id",
   "category_id": "cat_id",
+  "knowledge_base_id": "default",
+  "knowledge_bases": [{ "knowledge_base_id": "default", "category_id": "cat_id" }],
   "slug_id": 42,
   "slug": "article-slug",
   "title": "Article Title",
@@ -143,7 +161,7 @@ Returned by published article endpoints:
 }
 ```
 
-Note: `content` is only included when `expand[]=content` is used. `translations` is an array of language codes that have published translations.
+Note: `content` is only included when `expand[]=content` is used. `translations` is an array of language codes that have published translations. `url` uses the help center's custom domain (or subfolder) when it has one, and the knowledge base's `/{slug}` prefix; it is `null` for an article that is only in internal knowledge bases.
 
 ### Draft Response
 
@@ -158,12 +176,14 @@ Returned by draft endpoints:
   "slug": "article-slug",
   "title": "Draft Title",
   "category_id": "cat_id",
+  "knowledge_base_id": "default",
+  "knowledge_bases": [{ "knowledge_base_id": "default", "category_id": "cat_id" }],
   "status": "unpublished",
   "has_unpublished_changes": true,
   "created_at": "2024-01-01T00:00:00.000Z",
   "updated_at": "2024-01-02T00:00:00.000Z",
   "published_at": null,
-  "preview_url": "https://domain.help.center/preview/PREVIEW_ID",
+  "preview_url": "https://domain.help.center/article/preview-PREVIEW_ID",
   "url": "https://domain.help.center/article/42-article-slug",
   "translations": ["de", "fr"],
   "content": { "html": "...", "text": "..." }
@@ -199,7 +219,8 @@ Returned by count endpoints:
   "filters": {
     "category": null,
     "search": null,
-    "status": null
+    "status": null,
+    "knowledge_base": null
   },
   "url": "/api/v0/centers/CENTER_ID/articles/count"
 }
@@ -225,6 +246,12 @@ Common error codes:
 | 400 | `missing_required_field` | A required field (e.g., `title`) was not provided |
 | 400 | `root_not_published` | Cannot publish translation when root article is not published |
 | 400 | `category_has_articles` | Cannot delete a category that has articles assigned to it |
+| 400 | `invalid_category` | The category isn't in that knowledge base's tree |
+| 400 | `no_category` | The knowledge base has no categories yet; create one first |
+| 403 | `plan_upgrade_required` | The plan doesn't include this (more knowledge bases, custom code). The body has `upgrade_url` to give the user |
+| 403 | `feature_not_available` | The feature isn't offered to this account yet |
+| 404 | `knowledge_base_not_found` | No knowledge base with that id; use `default` or an id from `GET /knowledge-bases` |
+| 409 | `ambiguous_category` | Several knowledge bases have this category id; pass `knowledge_base` |
 | 401 | `invalid_api_key` | API key is invalid or missing |
 | 403 | `insufficient_scope` | API key lacks the required scope |
 | 403 | `center_blocked` | Center is blocked |
@@ -278,7 +305,7 @@ Common error codes:
 
 ### When the user wants to CREATE a new article
 
-1. **List categories** so the article can be assigned properly:
+1. **List categories** so the article can be assigned properly (with several knowledge bases, add `?knowledge_base=KB_ID` for that one's categories):
 
    ```bash
    curl -s -X GET \
@@ -324,7 +351,9 @@ Common error codes:
    |-------|----------|-------------|
    | `title` | Yes | Article title |
    | `content.html` | No | HTML content body. Defaults to empty if omitted. |
-   | `category_id` | No | Category ID from the categories list. Defaults to the first category if omitted. |
+   | `category_id` | No | Category ID from that knowledge base's categories. Defaults to its first category. An unknown id is rejected (`400 invalid_category`). |
+   | `knowledge_base_id` | No | `"default"` (the default) or a knowledge base id. |
+   | `knowledge_bases` | No | Instead of the two above, several placements: `[{ "knowledge_base_id": "...", "category_id": "..." }]`, primary first. |
    | `metadata.seo` | No | SEO metadata object with `metaTitle` and `metaDesc` fields. |
 
    The response returns the draft object with `expand: ['content']`.
@@ -348,7 +377,9 @@ Common error codes:
 
 5. **Use pagination for large result sets.** Default limit is 50, max is 100. Check `has_more` in the response and use `starting_after` with the last item's `id` to fetch more.
 
-6. **Unpublishing cascades to translations.** When the root (default language) article is unpublished, **all translations are also unpublished** automatically. Warn the user about this before unpublishing a root article that has translations.
+6. **Confirm knowledge base changes.** Creating, renaming or deleting a knowledge base, changing its visibility, and changing its settings are live on the public site right away. Deleting one permanently deletes the articles that are only in it — tell the user `articles_only_here` first. Show the user any custom JavaScript/CSS before saving it.
+
+7. **Unpublishing cascades to translations.** When the root (default language) article is unpublished, **all translations are also unpublished** automatically. Warn the user about this before unpublishing a root article that has translations.
 
 ## API Endpoint Reference
 
@@ -362,7 +393,7 @@ GET /v0/centers/:centerId
 
 Scope: `content.read`
 
-Returns center configuration including language settings.
+Returns center configuration including language settings and knowledge bases.
 
 **Response:**
 
@@ -372,11 +403,19 @@ Returns center configuration including language settings.
   "object": "center",
   "name": "My Help Center",
   "domain": "mycompany.help.center",
+  "url": "https://help.mycompany.com",
   "default_language": "en",
   "additional_languages": ["de", "fr", "es"],
+  "knowledge_bases": [
+    { "id": "default", "name": "My Help Center", "slug": null, "visibility": "public", "url": "https://help.mycompany.com" },
+    { "id": "kb_id", "name": "Mobile app", "slug": "mobile", "visibility": "public", "url": "https://help.mycompany.com/mobile" }
+  ],
+  "knowledge_base_limit": 3,
   "created_at": "2024-01-01T00:00:00.000Z"
 }
 ```
+
+`url` is the public help center (custom domain or subfolder when set). `knowledge_base_limit` is how many knowledge bases the plan allows, the default one included.
 
 Use `additional_languages` to check which translation languages are configured before creating translations.
 
@@ -396,7 +435,8 @@ Returns only **published** articles.
 | Parameter | Description |
 |-----------|-------------|
 | `search` | Search in title and text fields |
-| `category` | Filter by category ID |
+| `category` | Filter by category ID (within `knowledge_base` when given) |
+| `knowledge_base` | Only articles in this knowledge base (`default` or an id). Omit for all of them. |
 | `limit` | Items per page (1-100, default: 50) |
 | `starting_after` | Cursor: article ID to start after |
 | `ending_before` | Cursor: article ID to end before |
@@ -440,6 +480,7 @@ Returns the count of published articles.
 |-----------|-------------|
 | `search` | Search in title and text fields |
 | `category` | Filter by category ID |
+| `knowledge_base` | Only articles in this knowledge base (`default` or an id) |
 
 **Example:**
 
@@ -481,7 +522,9 @@ Creates a new article as a draft.
 | -------------- | -------- | -------------------------------------------- |
 | `title`        | Yes      | Article title                                |
 | `content.html` | No       | HTML content body                            |
-| `category_id`  | No       | Category ID. Defaults to first category.     |
+| `category_id`  | No       | Category ID in that knowledge base. Defaults to its first category; an unknown id returns `400 invalid_category`. |
+| `knowledge_base_id` | No  | `"default"` (the default) or a knowledge base id |
+| `knowledge_bases` | No    | Several placements instead: `[{ "knowledge_base_id", "category_id" }]`, primary first |
 | `metadata.seo` | No       | SEO metadata with `metaTitle` and `metaDesc` |
 
 #### Delete Article
@@ -549,6 +592,7 @@ Returns all article drafts (published, unpublished, or with changes).
 | `status` | Filter by draft status: `unpublished`, `published`, or `published_with_changes` |
 | `search` | Search in title and text fields |
 | `category` | Filter by category ID |
+| `knowledge_base` | Only drafts of articles in this knowledge base (`default` or an id) |
 | `limit` | Items per page (1-100, default: 50) |
 | `starting_after` | Cursor: article ID to start after |
 | `ending_before` | Cursor: article ID to end before |
@@ -578,6 +622,7 @@ Returns the count of drafts matching the given filters.
 | `status` | Filter: `unpublished`, `published`, or `published_with_changes` |
 | `search` | Search in title and text fields |
 | `category` | Filter by category ID |
+| `knowledge_base` | Only drafts of articles in this knowledge base |
 
 **Example:**
 
@@ -660,7 +705,9 @@ Updates article metadata without affecting draft content. These changes apply to
 
 | Field      | Description                                                                                          |
 | ---------- | ---------------------------------------------------------------------------------------------------- |
-| `category` | Reassign to a different category ID. Automatically updates category membership.                      |
+| `category` | Reassign to a different category ID. Automatically updates category membership. Moves it within its primary knowledge base, or within `knowledge_base_id`'s placement. |
+| `knowledge_base_id` | With `category`: which of the article's knowledge bases the category change is in (`default` or an id). |
+| `knowledge_bases` | Replace every knowledge base the article is in: `[{ "knowledge_base_id", "category_id" }]`, primary first. This is how you move an article to another knowledge base or add it to more. Can't be combined with `category`. |
 | `subtitle` | Article subtitle                                                                                     |
 | `slug`     | Custom URL slug                                                                                      |
 | `seo`      | Full SEO object. Individual fields (`seo.metaTitle`, `seo.metaDesc`) can also be updated separately. |
@@ -687,7 +734,7 @@ curl -s -X POST \
 
 ### Categories
 
-Categories help organize articles. Supports one level of subcategories (parent > child).
+Categories help organize articles. Supports one level of subcategories (parent > child). Each knowledge base has its own tree: every category endpoint takes `knowledge_base` (`default` or an id) as a query parameter, or in the body on POST/PATCH, and each category in a response has `knowledge_base_id`. Without it, see the defaults under Knowledge Bases.
 
 #### List Categories
 
@@ -697,7 +744,7 @@ GET /v0/centers/:centerId/articles/categories
 
 Scope: `content.read`
 
-Returns all categories with their subcategories.
+Returns all categories of one knowledge base with their subcategories (`?knowledge_base=`, default: the default one).
 
 **Category Response Shape:**
 
@@ -711,6 +758,7 @@ Returns all categories with their subcategories.
       "description": "Articles for new users",
       "slug": "getting-started",
       "slug_id": 1,
+      "knowledge_base_id": "default",
       "translations": {
         "de": {
           "name": "Erste Schritte",
@@ -812,9 +860,82 @@ DELETE /v0/centers/:centerId/articles/categories/:categoryId
 
 Scope: `content.delete`
 
-Deletes a category. **Cannot delete a category that has articles assigned to it**, including articles assigned to its subcategories. The error response includes the IDs of articles blocking deletion so you can reassign them first.
+Deletes a category. **Cannot delete a category that has articles assigned to it**, including articles assigned to its subcategories (in that knowledge base, counting articles that are also in other knowledge bases). The error response includes the IDs of articles blocking deletion so you can reassign them first.
 
 Returns the full categories list on success.
+
+### Knowledge Bases (endpoints)
+
+`:kbId` is `default` or a knowledge base id. Reading needs `content.read`; managing needs `settings.write` (deleting also `content.delete`).
+
+**Knowledge base object:**
+
+```json
+{
+  "id": "kb_id",
+  "object": "knowledge_base",
+  "name": "Mobile app",
+  "slug": "mobile",
+  "previous_slugs": ["app"],
+  "description": "Help for the iOS and Android apps",
+  "icon": null,
+  "visibility": "public",
+  "is_default": false,
+  "order": 1,
+  "url": "https://help.mycompany.com/mobile",
+  "article_count": 12,
+  "articles_only_here": 9,
+  "created_at": "2026-10-01T00:00:00.000Z",
+  "updated_at": "2026-10-02T00:00:00.000Z"
+}
+```
+
+The default knowledge base has `id: "default"`, `slug: null` and `is_default: true`. `url` is `null` for internal ones. `articles_only_here` is how many articles are in no other knowledge base — what deleting it would delete.
+
+| Action | Method | Path | Notes |
+|---|---|---|---|
+| List | GET | `/v0/centers/:centerId/knowledge-bases` | Default first, then by `order`. Also returns `knowledge_base_limit`. |
+| Get | GET | `/v0/centers/:centerId/knowledge-bases/:kbId` | |
+| Create | POST | `/v0/centers/:centerId/knowledge-bases` | `name` (1–60 chars), `slug`, optional `description`, `icon`, `visibility`. Starts with one "General" category and no articles. Returns `201`. |
+| Update | PATCH | `/v0/centers/:centerId/knowledge-bases/:kbId` | `name`, `slug`, `description`, `icon`, `visibility`, `order`. A new slug keeps the old one in `previous_slugs`, so old links redirect. For `default` only `name`, `description` and `icon` (else `400 default_knowledge_base_fixed`). |
+| Delete | DELETE | `/v0/centers/:centerId/knowledge-bases/:kbId` | Deletes it, its categories, and the articles only in it; shared articles stay in their other knowledge bases. Returns `{ deleted: true, deleted_articles, kept_articles }`. Not for `default`. |
+
+**Slugs:** 3–40 lowercase letters, digits or hyphens, not starting or ending with a hyphen; not a language code (`es`, `pt-br`) or a reserved word (`article`, `category`, `search`, `api`, …). Errors: `slug_invalid_format`, `slug_reserved`, `slug_taken`. Creating one over the plan's limit returns `403 plan_upgrade_required` with `limit` and `upgrade_url`.
+
+#### Knowledge Base Settings
+
+```
+GET   /v0/centers/:centerId/knowledge-bases/:kbId/settings     (content.read)
+PATCH /v0/centers/:centerId/knowledge-bases/:kbId/settings     (settings.write)
+```
+
+A knowledge base's design, SEO, header links, custom code and AI toggles. The response has `effective` (what its site uses) and, for a knowledge base other than the default, `overrides` (what it sets itself — everything else is inherited from the default knowledge base, whose settings are the help center's own; `overrides` is `null` for `default`).
+
+```json
+{
+  "design": { "layout": "docs", "center_logo": "https://…/logo.png", "primary_color": "#1a73e8", "banner_type": "color", "banner_color": "#0b1f3a", "banner_image": null },
+  "seo": { "meta_title": "Mobile help", "meta_desc": "…", "favicon": null, "og_image": null, "search_index": true },
+  "header_links": [{ "id": "home", "label": "Home", "path": "/" }],
+  "custom_code": { "js": "<script>…</script>", "css": "#hc-website h1 { … }" },
+  "ai": { "enable_search": true, "allow_contact": true },
+  "translations": { "fr": { "seo": { "meta_title": "Aide mobile", "meta_desc": null } } }
+}
+```
+
+PATCH takes any subset of that shape and changes only the fields you send:
+
+- For a knowledge base other than the default, `null` removes its own value so it inherits again. For `default`, `null` resets the field to the built-in default.
+- `header_links` replaces the whole list (at most 20; `label` 1–60 chars; `path` a site path like `/contact`, an http(s) URL, or `mailto:`/`tel:`).
+- Colors are hex (`#1a73e8`); images are http(s) URLs (upload them in the dashboard); `layout` is `classic` or `docs`; `banner_type` is `color` or `image`; custom JS/CSS up to 100,000 characters each; `translations` keys must be one of `additional_languages`.
+- Errors: `400 invalid_setting` / `unknown_setting` / `invalid_language`, `400 contact_link_not_allowed` (a contact link while email support is off), `403 plan_upgrade_required` (custom code needs a plan with integrations), `403 ai_limit_reached` (turning AI search on after the month's AI answers are used up).
+
+```bash
+curl -s -X PATCH \
+  -H "Authorization: Bearer $HC_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{ "design": { "primary_color": "#1a73e8", "layout": null }, "seo": { "meta_title": "Mobile app help" } }' \
+  "https://api.help.center/v0/centers/$HC_CENTER_ID/knowledge-bases/KB_ID/settings"
+```
 
 ### Image Upload
 
@@ -1022,6 +1143,13 @@ When writing help center articles:
 | Action                      | Method | Endpoint                                                                 | Scope   |
 | --------------------------- | ------ | ------------------------------------------------------------------------ | ------- |
 | Get center info             | GET    | `/v0/centers/:centerId`                                                  | read    |
+| List knowledge bases        | GET    | `/v0/centers/:centerId/knowledge-bases`                                  | read    |
+| Get knowledge base          | GET    | `/v0/centers/:centerId/knowledge-bases/:kbId`                            | read    |
+| Create knowledge base       | POST   | `/v0/centers/:centerId/knowledge-bases`                                  | settings |
+| Update knowledge base       | PATCH  | `/v0/centers/:centerId/knowledge-bases/:kbId`                            | settings |
+| Delete knowledge base       | DELETE | `/v0/centers/:centerId/knowledge-bases/:kbId`                            | settings + delete |
+| Get knowledge base settings | GET    | `/v0/centers/:centerId/knowledge-bases/:kbId/settings`                   | read    |
+| Update knowledge base settings | PATCH | `/v0/centers/:centerId/knowledge-bases/:kbId/settings`                | settings |
 | List articles               | GET    | `/v0/centers/:centerId/articles`                                         | read    |
 | Get article                 | GET    | `/v0/centers/:centerId/articles/:articleId`                              | read    |
 | Count articles              | GET    | `/v0/centers/:centerId/articles/count`                                   | read    |
