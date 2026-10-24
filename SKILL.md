@@ -9,9 +9,13 @@ description: >
   management. Also use when the user says "reply to this customer", "draft a
   reply", "list open conversations", "assign this conversation", "add a note
   to the conversation", or mentions the Help.Center inbox, customer support
-  conversations, customer replies, or internal discussion threads.
+  conversations, customer replies, or internal discussion threads, or wants
+  to create or manage knowledge bases (e.g. a separate one for a mobile app)
+  and their design, SEO, header links or custom code. Also for AI-only FAQ
+  knowledge, Actions (questions customers ask that the docs don't answer),
+  help center analytics, and conversation or article metrics.
 metadata:
-  version: 1.1.0
+  version: 1.2.0
   author: Microdot Company
 ---
 
@@ -19,12 +23,13 @@ metadata:
 
 Manage help center articles and customer conversations through the Help.Center API.
 
-The API has two halves:
+The API has three parts:
 
-- **Article Management** — create, read, update, publish, and translate help center articles. Organize by category and upload images.
+- **Article Management** — create, read, update, publish, and translate help center articles. Organize by category and upload images. A help center can have several **knowledge bases**, each with its own categories, design and SEO.
 - **Conversation Management** — read inbox conversations, draft and send replies to customers, post internal discussion notes, and update conversation status or assignee.
+- **Knowledge, Actions and Analytics** — AI-only knowledge (FAQs and answers saved from conversations), **Actions** (recurring customer questions the help center doesn't answer yet), the analytics overview, and metrics queries over conversations and articles.
 
-The two halves compose well: when answering a customer, search articles first, draft a reply that references the relevant article, and let the user review before sending.
+They compose well: when answering a customer, search articles first, draft a reply that references the relevant article, and let the user review before sending. When an Action shows a gap, write the missing article, then mark the Action resolved.
 
 # Help.Center Article Management
 
@@ -36,14 +41,18 @@ Before making any API calls, you need two pieces of information from the user:
 
 1. **API Key** - Created in Help.Center dashboard under Settings > General > API
    - The key must have appropriate scopes:
-     - `content.read` - Required for searching/reading articles, drafts, categories, and center info
-     - `content.write` - Required for creating/updating articles, drafts, categories, and uploading images
+     - `content.read` - Required for searching/reading articles, drafts, categories, knowledge items, article metrics, and center info
+     - `content.write` - Required for creating/updating articles, drafts, categories, and knowledge items, and uploading images
      - `content.publish` - Required for publishing/unpublishing articles and translations
-     - `content.delete` - Required for deleting articles, categories, or translations
-     - `conversation.read` - Required for listing/reading conversations, messages, discussion, and drafts
-     - `conversation.write` - Required for updating conversation status/assignee, editing drafts, and posting discussion entries
+     - `content.delete` - Required for deleting articles, categories, translations, or knowledge items (and, with `settings.write`, knowledge bases)
+     - `settings.write` - Required for managing knowledge bases and their settings, and for adding languages
+     - `conversation.read` - Required for listing/reading conversations, messages, discussion, drafts, Actions, and conversation metrics
+     - `conversation.write` - Required for updating conversation status/assignee, editing drafts, posting discussion entries, and updating Actions
      - `conversation.reply` - Required for sending replies to customers (POST `/reply` and POST `/draft/send`)
+     - `analytics.read` - Required for the analytics overview
 2. **Center ID** - Found on the same page
+
+Some endpoints also need a plan that includes the feature: conversations, center users and conversation metrics need the **Inbox**, `/actions` needs **Actions**, and `/analytics` needs **Analytics**. On a plan without it the API returns `403 plan_upgrade_required` with an `upgrade_url`. Give that link to the user; anyone with billing access to the help center can upgrade there.
 
 If the user hasn't provided these, ask for them before proceeding. Store them as environment variables for the session:
 
@@ -79,6 +88,19 @@ Drafts have three statuses:
 | `published_with_changes` | Published, but the draft has unpublished edits that differ from the live version. |
 
 Use the `status` query parameter on draft endpoints to filter by these states.
+
+### Knowledge Bases
+
+A help center has a **default knowledge base** (the help center itself, served at the site root) and can have **additional knowledge bases**, each served under `/{slug}` on the same site — e.g. `help.acme.com/mobile/article/1234-reset-password`.
+
+- The default knowledge base's id is the string `"default"`; the others have object ids. List them with `GET /knowledge-bases`.
+- Each knowledge base has its **own category tree**. Category endpoints take `knowledge_base`.
+- `visibility` is `public` (on the site, used by the customer-facing AI) or `internal` (team-only: never on the public site, used only by team-facing AI). Internal-only articles have `url: null`.
+- An article can be in **several knowledge bases**, each with its own category. Responses list them in `knowledge_bases` (primary first); `knowledge_base_id` and `category_id` are the primary placement. Its public `url` uses the first public one.
+- Article ids and `slug_id` numbers are unique across the whole help center, so old links keep working when an article moves.
+- **When you omit the knowledge base**: article lists, counts and search cover every knowledge base; creating an article or category puts it in the default one; `GET /articles/categories` returns the default one's tree; updating or deleting a category finds it in whichever tree has it (409 `ambiguous_category` if several do — then pass `knowledge_base`).
+
+Most help centers only have the default knowledge base; then you can ignore all of this.
 
 ### Expand Parameter
 
@@ -129,6 +151,8 @@ Returned by published article endpoints:
   "object": "article",
   "center_id": "center_id",
   "category_id": "cat_id",
+  "knowledge_base_id": "default",
+  "knowledge_bases": [{ "knowledge_base_id": "default", "category_id": "cat_id" }],
   "slug_id": 42,
   "slug": "article-slug",
   "title": "Article Title",
@@ -143,7 +167,7 @@ Returned by published article endpoints:
 }
 ```
 
-Note: `content` is only included when `expand[]=content` is used. `translations` is an array of language codes that have published translations.
+Note: `content` is only included when `expand[]=content` is used. `translations` is an array of language codes that have published translations. `url` uses the help center's custom domain (or subfolder) when it has one, and the knowledge base's `/{slug}` prefix; it is `null` for an article that is only in internal knowledge bases.
 
 ### Draft Response
 
@@ -158,12 +182,14 @@ Returned by draft endpoints:
   "slug": "article-slug",
   "title": "Draft Title",
   "category_id": "cat_id",
+  "knowledge_base_id": "default",
+  "knowledge_bases": [{ "knowledge_base_id": "default", "category_id": "cat_id" }],
   "status": "unpublished",
   "has_unpublished_changes": true,
   "created_at": "2024-01-01T00:00:00.000Z",
   "updated_at": "2024-01-02T00:00:00.000Z",
   "published_at": null,
-  "preview_url": "https://domain.help.center/preview/PREVIEW_ID",
+  "preview_url": "https://domain.help.center/article/preview-PREVIEW_ID",
   "url": "https://domain.help.center/article/42-article-slug",
   "translations": ["de", "fr"],
   "content": { "html": "...", "text": "..." }
@@ -199,7 +225,8 @@ Returned by count endpoints:
   "filters": {
     "category": null,
     "search": null,
-    "status": null
+    "status": null,
+    "knowledge_base": null
   },
   "url": "/api/v0/centers/CENTER_ID/articles/count"
 }
@@ -225,12 +252,20 @@ Common error codes:
 | 400 | `missing_required_field` | A required field (e.g., `title`) was not provided |
 | 400 | `root_not_published` | Cannot publish translation when root article is not published |
 | 400 | `category_has_articles` | Cannot delete a category that has articles assigned to it |
+| 400 | `invalid_category` | The category isn't in that knowledge base's tree |
+| 400 | `no_category` | The knowledge base has no categories yet; create one first |
+| 403 | `plan_upgrade_required` | The plan doesn't include this (Inbox, Actions, Analytics, more knowledge bases, custom code). The body has `feature`, `current_plan`, `required_plans` and `upgrade_url` to give the user |
+| 403 | `feature_not_available` | The feature isn't offered to this account yet (e.g. managing additional knowledge bases). Upgrading doesn't help |
+| 404 | `knowledge_base_not_found` | No knowledge base with that id; use `default` or an id from `GET /knowledge-bases` |
+| 409 | `ambiguous_category` | Several knowledge bases have this category id; pass `knowledge_base` |
+| 409 | `confirmation_required` | Deleting a knowledge base: `expected_deleted_articles` didn't match. Nothing was deleted; the body has the current `articles_only_here` |
+| 409 | `conflict` | Another change to the knowledge bases happened at the same time (e.g. two renames to one slug); fetch again and retry |
 | 401 | `invalid_api_key` | API key is invalid or missing |
 | 403 | `insufficient_scope` | API key lacks the required scope |
 | 403 | `center_blocked` | Center is blocked |
 | 404 | `not_found` | Resource not found |
 | 404 | `endpoint_not_found` | The requested API endpoint does not exist |
-| 429 | `rate_limited` | Too many requests, wait and retry |
+| 429 | `rate_limited` | Too many requests. The limit is 120 requests per minute per API key (and 30 failed authentications per 10 minutes per IP). Wait as long as the `Retry-After` header says (when present), then retry |
 
 ## Workflow
 
@@ -278,7 +313,7 @@ Common error codes:
 
 ### When the user wants to CREATE a new article
 
-1. **List categories** so the article can be assigned properly:
+1. **List categories** so the article can be assigned properly (with several knowledge bases, add `?knowledge_base=KB_ID` for that one's categories):
 
    ```bash
    curl -s -X GET \
@@ -324,7 +359,9 @@ Common error codes:
    |-------|----------|-------------|
    | `title` | Yes | Article title |
    | `content.html` | No | HTML content body. Defaults to empty if omitted. |
-   | `category_id` | No | Category ID from the categories list. Defaults to the first category if omitted. |
+   | `category_id` | No | Category ID from that knowledge base's categories. Defaults to its first category. An unknown id is rejected (`400 invalid_category`). |
+   | `knowledge_base_id` | No | `"default"` (the default) or a knowledge base id. |
+   | `knowledge_bases` | No | Instead of the two above, several placements: `[{ "knowledge_base_id": "...", "category_id": "..." }]`, primary first. |
    | `metadata.seo` | No | SEO metadata object with `metaTitle` and `metaDesc` fields. |
 
    The response returns the draft object with `expand: ['content']`.
@@ -348,7 +385,9 @@ Common error codes:
 
 5. **Use pagination for large result sets.** Default limit is 50, max is 100. Check `has_more` in the response and use `starting_after` with the last item's `id` to fetch more.
 
-6. **Unpublishing cascades to translations.** When the root (default language) article is unpublished, **all translations are also unpublished** automatically. Warn the user about this before unpublishing a root article that has translations.
+6. **Confirm knowledge base changes.** Creating, renaming or deleting a knowledge base, changing its visibility, and changing its settings are live on the public site right away. Deleting one permanently deletes the articles that are only in it — tell the user `articles_only_here` first, and send the number they confirmed as `expected_deleted_articles` so nothing more is deleted if articles were added since. Show the user any custom JavaScript/CSS before saving it.
+
+7. **Unpublishing cascades to translations.** When the root (default language) article is unpublished, **all translations are also unpublished** automatically. Warn the user about this before unpublishing a root article that has translations.
 
 ## API Endpoint Reference
 
@@ -362,7 +401,7 @@ GET /v0/centers/:centerId
 
 Scope: `content.read`
 
-Returns center configuration including language settings.
+Returns center configuration including language settings and knowledge bases.
 
 **Response:**
 
@@ -372,13 +411,50 @@ Returns center configuration including language settings.
   "object": "center",
   "name": "My Help Center",
   "domain": "mycompany.help.center",
+  "url": "https://help.mycompany.com",
   "default_language": "en",
   "additional_languages": ["de", "fr", "es"],
+  "knowledge_bases": [
+    { "id": "default", "name": "My Help Center", "slug": null, "visibility": "public", "url": "https://help.mycompany.com" },
+    { "id": "kb_id", "name": "Mobile app", "slug": "mobile", "visibility": "public", "url": "https://help.mycompany.com/mobile" }
+  ],
+  "knowledge_base_limit": 3,
   "created_at": "2024-01-01T00:00:00.000Z"
 }
 ```
 
+`url` is the public help center (custom domain or subfolder when set). `knowledge_base_limit` is how many knowledge bases the plan allows, the default one included.
+
 Use `additional_languages` to check which translation languages are configured before creating translations.
+
+#### Add Language
+
+```
+POST /v0/centers/:centerId/languages
+```
+
+Scope: `settings.write`
+
+Adds a translation language to the help center and sets up its interface strings, as Settings → Languages in the dashboard does. Articles can then be translated and published in it. Ask the user before adding one: the language switcher on the public help center lists it.
+
+**Request Body:**
+
+| Field      | Required | Description                                       |
+| ---------- | -------- | ------------------------------------------------- |
+| `language` | Yes      | Language code: `en`, `pt-br`, `es`, `fr`, `it`, `de`, `id`, `zh`, `ar`, `ru`, `he`, `uk`, `no`, `ko`, `ur`, `da`, `sv` or `ja` |
+
+**Response:** `201 Created`, or `200` with `added: false` when the language is already the default or an additional one:
+
+```json
+{
+  "object": "languages",
+  "default_language": "en",
+  "additional_languages": ["de", "fr"],
+  "added": true
+}
+```
+
+Returns `400 unsupported_language` for any other code. For the last nine codes (`ru` to `ja`), the help center's interface text stays in the default language; only articles are translated.
 
 ### Articles (Published)
 
@@ -396,7 +472,8 @@ Returns only **published** articles.
 | Parameter | Description |
 |-----------|-------------|
 | `search` | Search in title and text fields |
-| `category` | Filter by category ID |
+| `category` | Filter by category ID (within `knowledge_base` when given) |
+| `knowledge_base` | Only articles in this knowledge base (`default` or an id). Omit for all of them. |
 | `limit` | Items per page (1-100, default: 50) |
 | `starting_after` | Cursor: article ID to start after |
 | `ending_before` | Cursor: article ID to end before |
@@ -440,6 +517,7 @@ Returns the count of published articles.
 |-----------|-------------|
 | `search` | Search in title and text fields |
 | `category` | Filter by category ID |
+| `knowledge_base` | Only articles in this knowledge base (`default` or an id) |
 
 **Example:**
 
@@ -481,7 +559,9 @@ Creates a new article as a draft.
 | -------------- | -------- | -------------------------------------------- |
 | `title`        | Yes      | Article title                                |
 | `content.html` | No       | HTML content body                            |
-| `category_id`  | No       | Category ID. Defaults to first category.     |
+| `category_id`  | No       | Category ID in that knowledge base. Defaults to its first category; an unknown id returns `400 invalid_category`. |
+| `knowledge_base_id` | No  | `"default"` (the default) or a knowledge base id |
+| `knowledge_bases` | No    | Several placements instead: `[{ "knowledge_base_id", "category_id" }]`, primary first |
 | `metadata.seo` | No       | SEO metadata with `metaTitle` and `metaDesc` |
 
 #### Delete Article
@@ -549,6 +629,7 @@ Returns all article drafts (published, unpublished, or with changes).
 | `status` | Filter by draft status: `unpublished`, `published`, or `published_with_changes` |
 | `search` | Search in title and text fields |
 | `category` | Filter by category ID |
+| `knowledge_base` | Only drafts of articles in this knowledge base (`default` or an id) |
 | `limit` | Items per page (1-100, default: 50) |
 | `starting_after` | Cursor: article ID to start after |
 | `ending_before` | Cursor: article ID to end before |
@@ -578,6 +659,7 @@ Returns the count of drafts matching the given filters.
 | `status` | Filter: `unpublished`, `published`, or `published_with_changes` |
 | `search` | Search in title and text fields |
 | `category` | Filter by category ID |
+| `knowledge_base` | Only drafts of articles in this knowledge base |
 
 **Example:**
 
@@ -660,7 +742,9 @@ Updates article metadata without affecting draft content. These changes apply to
 
 | Field      | Description                                                                                          |
 | ---------- | ---------------------------------------------------------------------------------------------------- |
-| `category` | Reassign to a different category ID. Automatically updates category membership.                      |
+| `category` | Reassign to a different category ID. Automatically updates category membership. Moves it within its primary knowledge base, or within `knowledge_base_id`'s placement. |
+| `knowledge_base_id` | With `category`: which of the article's knowledge bases the category change is in (`default` or an id). |
+| `knowledge_bases` | Replace every knowledge base the article is in: `[{ "knowledge_base_id", "category_id" }]`, primary first. This is how you move an article to another knowledge base or add it to more. Can't be combined with `category`. |
 | `subtitle` | Article subtitle                                                                                     |
 | `slug`     | Custom URL slug                                                                                      |
 | `seo`      | Full SEO object. Individual fields (`seo.metaTitle`, `seo.metaDesc`) can also be updated separately. |
@@ -687,7 +771,7 @@ curl -s -X POST \
 
 ### Categories
 
-Categories help organize articles. Supports one level of subcategories (parent > child).
+Categories help organize articles. Supports one level of subcategories (parent > child). Each knowledge base has its own tree: every category endpoint takes `knowledge_base` (`default` or an id) as a query parameter, or in the body on POST/PATCH, and each category in a response has `knowledge_base_id`. Without it, see the defaults under Knowledge Bases.
 
 #### List Categories
 
@@ -697,7 +781,7 @@ GET /v0/centers/:centerId/articles/categories
 
 Scope: `content.read`
 
-Returns all categories with their subcategories.
+Returns all categories of one knowledge base with their subcategories (`?knowledge_base=`, default: the default one).
 
 **Category Response Shape:**
 
@@ -711,6 +795,7 @@ Returns all categories with their subcategories.
       "description": "Articles for new users",
       "slug": "getting-started",
       "slug_id": 1,
+      "knowledge_base_id": "default",
       "translations": {
         "de": {
           "name": "Erste Schritte",
@@ -812,9 +897,84 @@ DELETE /v0/centers/:centerId/articles/categories/:categoryId
 
 Scope: `content.delete`
 
-Deletes a category. **Cannot delete a category that has articles assigned to it**, including articles assigned to its subcategories. The error response includes the IDs of articles blocking deletion so you can reassign them first.
+Deletes a category. **Cannot delete a category that has articles assigned to it**, including articles assigned to its subcategories (in that knowledge base, counting articles that are also in other knowledge bases). The error response includes the IDs of articles blocking deletion so you can reassign them first.
 
 Returns the full categories list on success.
+
+### Knowledge Bases (endpoints)
+
+`:kbId` is `default` or a knowledge base id. Reading needs `content.read`; managing needs `settings.write` (deleting also `content.delete`).
+
+Multiple knowledge bases are still rolling out. Until an account has them, creating a knowledge base and changing or deleting an additional one (including its settings) return `403 feature_not_available`. The `default` knowledge base is the help center's own settings and can always be changed.
+
+**Knowledge base object:**
+
+```json
+{
+  "id": "kb_id",
+  "object": "knowledge_base",
+  "name": "Mobile app",
+  "slug": "mobile",
+  "previous_slugs": ["app"],
+  "description": "Help for the iOS and Android apps",
+  "icon": null,
+  "visibility": "public",
+  "is_default": false,
+  "order": 1,
+  "url": "https://help.mycompany.com/mobile",
+  "article_count": 12,
+  "articles_only_here": 9,
+  "created_at": "2026-10-01T00:00:00.000Z",
+  "updated_at": "2026-10-02T00:00:00.000Z"
+}
+```
+
+The default knowledge base has `id: "default"`, `slug: null` and `is_default: true`. `url` is `null` for internal ones. `articles_only_here` is how many articles are in no other knowledge base — what deleting it would delete.
+
+| Action | Method | Path | Notes |
+|---|---|---|---|
+| List | GET | `/v0/centers/:centerId/knowledge-bases` | Default first, then by `order`. Also returns `knowledge_base_limit`. |
+| Get | GET | `/v0/centers/:centerId/knowledge-bases/:kbId` | |
+| Create | POST | `/v0/centers/:centerId/knowledge-bases` | `name` (1–60 chars), `slug`, optional `description`, `icon`, `visibility`. Starts with one "General" category and no articles. Returns `201`. |
+| Update | PATCH | `/v0/centers/:centerId/knowledge-bases/:kbId` | `name`, `slug`, `description`, `icon`, `visibility`, `order`. A new slug keeps the old one in `previous_slugs`, so old links redirect. For `default` only `name`, `description` and `icon` (else `400 default_knowledge_base_fixed`). `409 conflict` if another change claimed the slug at the same time. |
+| Delete | DELETE | `/v0/centers/:centerId/knowledge-bases/:kbId?expected_deleted_articles=N` | Deletes it, its categories, and the articles only in it; shared articles stay in their other knowledge bases. Returns `{ deleted: true, deleted_articles, kept_articles }`. Not for `default`. Pass `expected_deleted_articles` with the `articles_only_here` count the user confirmed: if the count has changed, nothing is deleted and you get `409 confirmation_required` with the new `articles_only_here` to confirm again. Optional, but always send it. |
+
+**Slugs:** 3–40 lowercase letters, digits or hyphens, not starting or ending with a hyphen; not a language code (`es`, `pt-br`) or a reserved word (`article`, `category`, `search`, `api`, …). Errors: `slug_invalid_format`, `slug_reserved`, `slug_taken`. Creating one over the plan's limit returns `403 plan_upgrade_required` with `limit` and `upgrade_url`.
+
+#### Knowledge Base Settings
+
+```
+GET   /v0/centers/:centerId/knowledge-bases/:kbId/settings     (content.read)
+PATCH /v0/centers/:centerId/knowledge-bases/:kbId/settings     (settings.write)
+```
+
+A knowledge base's design, SEO, header links, custom code and AI toggles. The response has `effective` (what its site uses) and, for a knowledge base other than the default, `overrides` (what it sets itself — everything else is inherited from the default knowledge base, whose settings are the help center's own; `overrides` is `null` for `default`).
+
+```json
+{
+  "design": { "layout": "docs", "center_logo": "https://…/logo.png", "primary_color": "#1a73e8", "banner_type": "color", "banner_color": "#0b1f3a", "banner_image": null },
+  "seo": { "meta_title": "Mobile help", "meta_desc": "…", "favicon": null, "og_image": null, "search_index": true },
+  "header_links": [{ "id": "home", "label": "Home", "path": "/" }],
+  "custom_code": { "js": "<script>…</script>", "css": "#hc-website h1 { … }" },
+  "ai": { "enable_search": true, "allow_contact": true },
+  "translations": { "fr": { "seo": { "meta_title": "Aide mobile", "meta_desc": null } } }
+}
+```
+
+PATCH takes any subset of that shape and changes only the fields you send:
+
+- For a knowledge base other than the default, `null` removes its own value so it inherits again. For `default`, `null` resets the field to the built-in default.
+- `header_links` replaces the whole list (at most 20; `label` 1–60 chars; `path` a site path like `/contact`, an http(s) URL, or `mailto:`/`tel:`).
+- Colors are hex (`#1a73e8`); images are http(s) URLs (upload them in the dashboard); `layout` is `classic` or `docs`; `banner_type` is `color` or `image`; custom JS/CSS up to 100,000 characters each; `translations` keys must be one of `additional_languages`.
+- Errors: `400 invalid_setting` / `unknown_setting` / `invalid_language`, `400 contact_link_not_allowed` (a contact link while email support is off), `403 plan_upgrade_required` (custom code needs a plan with integrations), `403 ai_limit_reached` (turning AI search on after the month's AI answers are used up).
+
+```bash
+curl -s -X PATCH \
+  -H "Authorization: Bearer $HC_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{ "design": { "primary_color": "#1a73e8", "layout": null }, "seo": { "meta_title": "Mobile app help" } }' \
+  "https://api.help.center/v0/centers/$HC_CENTER_ID/knowledge-bases/KB_ID/settings"
+```
 
 ### Image Upload
 
@@ -861,7 +1021,7 @@ Use the returned `url` in your article HTML: `<img src="URL" alt="description">`
 
 ### Translations
 
-Centers can have additional languages configured. Use the Get Center Info endpoint to check `additional_languages` for available language codes (e.g., `de`, `fr`, `es`).
+Centers can have additional languages configured. Use the Get Center Info endpoint to check `additional_languages` for available language codes (e.g., `de`, `fr`, `es`). If the language you need isn't there, add it with POST `/languages` (after asking the user) before creating the translation.
 
 #### Important Rules for Translations
 
@@ -1022,6 +1182,14 @@ When writing help center articles:
 | Action                      | Method | Endpoint                                                                 | Scope   |
 | --------------------------- | ------ | ------------------------------------------------------------------------ | ------- |
 | Get center info             | GET    | `/v0/centers/:centerId`                                                  | read    |
+| Add language                | POST   | `/v0/centers/:centerId/languages`                                        | settings |
+| List knowledge bases        | GET    | `/v0/centers/:centerId/knowledge-bases`                                  | read    |
+| Get knowledge base          | GET    | `/v0/centers/:centerId/knowledge-bases/:kbId`                            | read    |
+| Create knowledge base       | POST   | `/v0/centers/:centerId/knowledge-bases`                                  | settings |
+| Update knowledge base       | PATCH  | `/v0/centers/:centerId/knowledge-bases/:kbId`                            | settings |
+| Delete knowledge base       | DELETE | `/v0/centers/:centerId/knowledge-bases/:kbId`                            | settings + delete |
+| Get knowledge base settings | GET    | `/v0/centers/:centerId/knowledge-bases/:kbId/settings`                   | read    |
+| Update knowledge base settings | PATCH | `/v0/centers/:centerId/knowledge-bases/:kbId/settings`                | settings |
 | List articles               | GET    | `/v0/centers/:centerId/articles`                                         | read    |
 | Get article                 | GET    | `/v0/centers/:centerId/articles/:articleId`                              | read    |
 | Count articles              | GET    | `/v0/centers/:centerId/articles/count`                                   | read    |
@@ -1358,6 +1526,7 @@ Errors use the same shape as the article API. Conversation-specific error codes:
 | 400         | `missing_recipient`        | A reply was attempted but no `to` address could be resolved.                  |
 | 400         | `missing_content`          | Reply or discussion entry had no `content`.                                   |
 | 400         | `empty_draft`              | POST `/draft/send` was called but the stored draft is empty.                  |
+| 403         | `plan_upgrade_required`    | The center's plan doesn't include the Inbox. Give the user `upgrade_url`.     |
 | 500         | `channel_not_configured`   | The center has no support channel configured to send from.                    |
 | 502         | `email_send_failed`        | The upstream email provider rejected the send.                                |
 
@@ -1909,3 +2078,244 @@ Returns the team members on this center. Use this to discover user ids for menti
 | Send draft              | POST   | `/v0/centers/:centerId/conversations/:conversationId/draft/send`               | reply |
 | Post discussion entry   | POST   | `/v0/centers/:centerId/conversations/:conversationId/discussion`               | write |
 | List center users       | GET    | `/v0/centers/:centerId/users`                                                  | read  |
+
+# Help.Center Knowledge, Actions and Analytics
+
+AI-only knowledge, the gaps customers keep asking about, and the numbers behind the help center. Uses the same base URL, authentication, and error format as the article API.
+
+## Knowledge Items
+
+**Knowledge items** are content the AI uses when answering, without being published as articles:
+
+- **`faq`** — one or more questions with an answer. Customer-facing AI answers draw on them, and cite them as sources, so treat them as customer-visible.
+- **`conversation`** — an answer saved from a solved conversation, with a title and the conversation it came from.
+
+Articles are not knowledge items; manage them with the article endpoints. After a create or update, the AI can use the item within a few seconds.
+
+### Knowledge Item Object
+
+```json
+{
+  "id": "knowledge_id",
+  "object": "knowledge",
+  "type": "faq",
+  "center_id": "center_id",
+  "questions": ["How do I reset two-factor authentication?", "I lost my 2FA device"],
+  "tags": ["security"],
+  "ai_reads": 12,
+  "created_at": "2026-10-01T00:00:00.000Z",
+  "updated_at": "2026-10-02T00:00:00.000Z",
+  "content": { "html": "<p>Go to Settings → Security…</p>", "text": "Go to Settings → Security…" }
+}
+```
+
+A `conversation` item has `title` and `conversation_id` instead of `questions`. `ai_reads` counts how often the AI has used it. `content` is only included with `?expand[]=content`, and always in create and update responses.
+
+### Knowledge Endpoints
+
+| Action | Method | Path | Scope | Notes |
+|---|---|---|---|---|
+| List | GET | `/v0/centers/:centerId/knowledge` | `content.read` | `?type=faq\|conversation`, `?expand[]=content`, `?limit` (1–100, default 50). Newest first. No cursor: `has_more` says whether there are more than `limit`. |
+| Get | GET | `/v0/centers/:centerId/knowledge/:knowledgeId` | `content.read` | `?expand[]=content` |
+| Create | POST | `/v0/centers/:centerId/knowledge` | `content.write` | See below. Returns `201`. |
+| Update | PATCH | `/v0/centers/:centerId/knowledge/:knowledgeId` | `content.write` | Any of `questions` (faq), `title` (conversation), `content`, `tags`. `questions` and `tags` replace the whole list. |
+| Delete | DELETE | `/v0/centers/:centerId/knowledge/:knowledgeId` | `content.delete` | Returns `{ id, object: "knowledge", deleted: true }`. The AI stops using it. |
+
+**Create body** — unknown fields are rejected:
+
+| `type` | Fields |
+|---|---|
+| `faq` | `questions` (array, at least one), `content` (HTML answer), optional `tags` |
+| `conversation` | `title`, `content` (HTML), `conversation_id`, optional `tags` |
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer $HC_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{ "type": "faq", "questions": ["Can I pay by invoice?"], "content": "<p>Yes, on annual plans. Contact billing@acme.com.</p>" }' \
+  "https://api.help.center/v0/centers/$HC_CENTER_ID/knowledge"
+```
+
+Errors: `400 invalid_type`, `400 invalid_conversation_id`, `404 knowledge_not_found`.
+
+When the answer would help readers of the help center too, suggest an article instead of (or as well as) a FAQ item.
+
+## Actions
+
+An **Action** is a question or problem that keeps coming up in customer conversations, grouped from similar conversations, usually because the help center doesn't answer it well. Actions need a plan with Actions (`403 plan_upgrade_required` otherwise).
+
+### Action Object
+
+```json
+{
+  "id": "action_id",
+  "object": "action",
+  "center_id": "center_id",
+  "title": "How do I export my data to CSV?",
+  "description": "Customers can't find the export option after the redesign.",
+  "type": "question",
+  "status": "open",
+  "conversation_count": 14,
+  "linear_issues": [],
+  "created_at": "2026-10-01T00:00:00.000Z",
+  "updated_at": "2026-10-20T00:00:00.000Z",
+  "conversations": [
+    { "id": "conversation_id", "number": 1247, "from": "widget", "subject": null, "created_at": "2026-10-19T00:00:00.000Z" }
+  ]
+}
+```
+
+- `type`: `question`, `issue` or `suggestion`. `status`: `open`, `resolved` or `dismissed`.
+- `linear_issues`: Linear issues linked to the Action from the dashboard.
+- In GET `/actions/:actionId`, each conversation also has `status` and `has_agent_reply`.
+
+### Action Endpoints
+
+| Action | Method | Path | Scope | Notes |
+|---|---|---|---|---|
+| List | GET | `/v0/centers/:centerId/actions` | `conversation.read` | Most conversations first. Only Actions with at least one conversation. |
+| Get | GET | `/v0/centers/:centerId/actions/:actionId` | `conversation.read` | With every conversation. |
+| Update | PATCH | `/v0/centers/:centerId/actions/:actionId` | `conversation.write` | `status` and/or `type` (at least one). The response has `conversations: []`; GET it again for the list. |
+
+**List query parameters:**
+
+| Parameter | Description |
+|---|---|
+| `status` | `open` (default), `resolved`, `dismissed`. Repeat it or comma-separate it for several: `?status=open,resolved` |
+| `type` | `question`, `issue` or `suggestion` (`400 invalid_type` otherwise) |
+| `start_date`, `end_date` | ISO dates; filter on when the Action was first created |
+| `limit` | 1–100, default 50. No cursor: `has_more` says whether there are more than `limit` |
+
+Errors: `404 action_not_found`.
+
+### Closing a Gap
+
+1. List open Actions and pick one with the user. GET it to read its conversations; fetch a few with the conversation endpoints to see how customers phrase it.
+2. Search the articles. Update the article that should answer it, or draft a new one (or a FAQ item), and let the user review and publish.
+3. Only then mark it `resolved`, or `dismissed` if the user says it isn't worth answering. Don't change an Action's status without being asked.
+
+## Analytics Overview
+
+```
+GET /v0/centers/:centerId/analytics
+```
+
+Scope: `analytics.read`. Needs a plan with Analytics.
+
+The numbers on the dashboard's Analytics page for a date range, with the period just before it for comparison.
+
+| Parameter | Description |
+|---|---|
+| `days` | The last N days up to now (1–365) |
+| `start_date`, `end_date` | ISO dates, whole UTC days, at most 365 days apart. Used when `days` is absent |
+
+With neither, the range is the last 30 days.
+
+**Response:**
+
+```json
+{
+  "object": "analytics",
+  "range": { "from": "2026-09-24T00:00:00.000Z", "to": "2026-10-24T23:59:59.999Z" },
+  "new_conversations": 420,
+  "replied_to": 380,
+  "closed": 350,
+  "ai_handled": 228,
+  "ai_handled_rate": 0.6,
+  "unique_visits": 15230,
+  "by_channel": [
+    { "channel": "email", "label": "Email", "new_conversations": 120, "ai_handled": 30 },
+    { "channel": "widget", "label": "Widget", "new_conversations": 200, "ai_handled": 130 },
+    { "channel": "kb", "label": "Knowledge base", "new_conversations": 100, "ai_handled": 68 }
+  ],
+  "previous_period": {
+    "range": { "from": "…", "to": "…" },
+    "new_conversations": 390, "replied_to": 350, "closed": 330, "ai_handled": 190, "ai_handled_rate": 0.54,
+    "unique_visits": 14100
+  }
+}
+```
+
+- Conversation numbers count conversations **created** in the range, spam excluded. `closed` counts those that are closed now.
+- `replied_to`: got a reply from an agent or the AI.
+- `ai_handled`: the AI resolved it with no agent. On the help center (`kb`) and widget: the AI answered from the docs, no answer was flagged, and the customer didn't go on to contact support. By email: the AI replied and the customer closed the conversation.
+- `ai_handled_rate`: `ai_handled / replied_to` (or `/ new_conversations` when nothing was replied to), from 0 to 1.
+- `unique_visits`: help center visits.
+
+## Metrics
+
+```
+POST /v0/centers/:centerId/metrics/conversations
+POST /v0/centers/:centerId/metrics/articles
+```
+
+Scope: `conversation.read` for conversations (and a plan with the Inbox), `content.read` for articles.
+
+Counts, breakdowns and time series. Send a small query; you get back aggregate rows, never documents. Use the list endpoints to read the items themselves.
+
+**Request body** (every field optional):
+
+| Field | Description |
+|---|---|
+| `filters` | Up to 10 `{ "field", "op", "value" }`. `op`: `eq`, `ne`, `in`, `gt`, `gte`, `lt`, `lte`. `value`: a string, number or boolean, or an array of them for `in`. All filters apply. |
+| `date_range` | `{ "from", "to" }`, ISO dates, on the created date |
+| `group_by` | A field below, or `day`, `week`, `month` for a time series |
+| `metric` | `count` (default), or `avg:`, `sum:`, `min:`, `max:` with a numeric field, e.g. `avg:views` |
+| `sort` | `desc` (default) or `asc` by value. Time series are always in date order |
+| `limit` | Rows to return, 1–100, default 50 |
+
+| Collection | Filter on | Group by | Numeric fields |
+|---|---|---|---|
+| `conversations` | `status`, `from` (channel), `tags`, `unread` | `status`, `from`, `assignee` (user id), `tags` | none |
+| `articles` | `category` (category id), `tags` | `category`, `tags` | `views`, `likes`, `dislikes`, `aiReads` |
+
+Conversations exclude spam. `unread` only takes `eq` with `true` or `false`: email conversations where the customer spoke last and is waiting for a reply.
+
+**Response:**
+
+```json
+{
+  "object": "metrics",
+  "collection": "conversations",
+  "group_by": "week",
+  "metric": "count",
+  "rows": [
+    { "key": "2026-W41", "value": 96 },
+    { "key": "2026-W42", "value": 112 }
+  ]
+}
+```
+
+Time keys look like `2026-10-24` (day), `2026-W43` (ISO week) and `2026-10` (month). Without `group_by` there is one row with key `total`. Rows with no value for the grouped field (e.g. unassigned conversations) also get the key `total`.
+
+```bash
+# Open conversations by channel this month
+curl -s -X POST \
+  -H "Authorization: Bearer $HC_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{ "filters": [{ "field": "status", "op": "eq", "value": "open" }], "date_range": { "from": "2026-10-01" }, "group_by": "from" }' \
+  "https://api.help.center/v0/centers/$HC_CENTER_ID/metrics/conversations"
+```
+
+An invalid query returns `400 invalid_query` with a message that says what is allowed.
+
+## Health Check
+
+`GET /v0/health` needs no API key and returns `{ "status": "ok", "version": "v0", "timestamp": "…" }`.
+
+## Knowledge, Actions and Analytics Quick Reference
+
+| Action                  | Method | Endpoint                                              | Scope              |
+| ----------------------- | ------ | ----------------------------------------------------- | ------------------ |
+| List knowledge items    | GET    | `/v0/centers/:centerId/knowledge`                     | content.read       |
+| Get knowledge item      | GET    | `/v0/centers/:centerId/knowledge/:knowledgeId`        | content.read       |
+| Create knowledge item   | POST   | `/v0/centers/:centerId/knowledge`                     | content.write      |
+| Update knowledge item   | PATCH  | `/v0/centers/:centerId/knowledge/:knowledgeId`        | content.write      |
+| Delete knowledge item   | DELETE | `/v0/centers/:centerId/knowledge/:knowledgeId`        | content.delete     |
+| List Actions            | GET    | `/v0/centers/:centerId/actions`                       | conversation.read  |
+| Get Action              | GET    | `/v0/centers/:centerId/actions/:actionId`             | conversation.read  |
+| Update Action           | PATCH  | `/v0/centers/:centerId/actions/:actionId`             | conversation.write |
+| Analytics overview      | GET    | `/v0/centers/:centerId/analytics`                     | analytics.read     |
+| Conversation metrics    | POST   | `/v0/centers/:centerId/metrics/conversations`         | conversation.read  |
+| Article metrics         | POST   | `/v0/centers/:centerId/metrics/articles`              | content.read       |
+| Health check            | GET    | `/v0/health`                                          | none               |
