@@ -10,8 +10,13 @@ Create, update, search, publish, and organize help center articles directly from
 
 - Create and publish articles with well-structured HTML
 - Search and update existing articles (preserving unchanged content)
-- Manage drafts, categories, and SEO metadata
+- Manage drafts, categories, translations, and SEO metadata
 - Publish/unpublish articles on demand
+- Manage knowledge bases and their design, SEO, and custom code
+- Read inbox conversations, draft and send replies, and post internal notes
+- Manage AI-only FAQ knowledge
+- Work through Actions (recurring customer questions the docs don't answer yet)
+- Read analytics and query conversation and article metrics
 
 ## Installation
 
@@ -52,10 +57,13 @@ Copy `SKILL.md` into your project and point your agent to it.
 You'll need to create an API key from your Help.Center dashboard (**Settings > General > API**):
 
 1. **API Key** - Create a new key with the necessary scopes:
-   - `content.read` - for searching and reading articles
-   - `content.write` - for creating and updating articles
+   - `content.read` - for searching and reading articles and knowledge
+   - `content.write` - for creating and updating articles and knowledge
    - `content.publish` - for publishing articles (optional)
-   - `content.delete` - for deleting articles (optional)
+   - `content.delete` - for deleting articles and knowledge (optional)
+   - `settings.write` - for managing knowledge bases and adding languages (optional)
+   - `conversation.read`, `conversation.write`, `conversation.reply` - for the inbox and Actions (optional)
+   - `analytics.read` - for the analytics overview (optional)
 2. **Center ID** - Found on the same page
 
 The skill will ask for these when you first use it.
