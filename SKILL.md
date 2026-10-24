@@ -15,7 +15,7 @@ description: >
   knowledge, Actions (questions customers ask that the docs don't answer),
   help center analytics, and conversation or article metrics.
 metadata:
-  version: 1.3.0
+  version: 1.2.0
   author: Microdot Company
 ---
 
