@@ -1,7 +1,7 @@
 {
   "name": "helpcenter-skill",
-  "description": "Manage help center articles via the Help.Center API - create, update, publish, and organize knowledge base content.",
-  "version": "1.2.0",
+  "description": "Manage help center articles via the Helpcenter API: create, update, publish, and organize knowledge base content.",
+  "version": "1.2.1",
   "author": {
     "name": "Microdot Company"
   },

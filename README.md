@@ -1,6 +1,6 @@
 # Helpcenter Skill
 
-An AI agent skill for managing help center articles via the [Help.Center](https://help.center) API. Works with any AI coding agent that supports the [Agent Skills](https://agentskills.io) specification.
+An AI agent skill for managing help center articles via the [Helpcenter](https://help.center) API. Works with any AI coding agent that supports the [Agent Skills](https://agentskills.io) specification.
 
 ## What it does
 
@@ -54,7 +54,7 @@ Copy `SKILL.md` into your project and point your agent to it.
 
 ## Setup
 
-You'll need to create an API key from your Help.Center dashboard (**Settings > General > API**):
+You'll need to create an API key from your Helpcenter dashboard (**Settings > General > API**):
 
 1. **API Key** - Create a new key with the necessary scopes:
    - `content.read` - for searching and reading articles and knowledge
