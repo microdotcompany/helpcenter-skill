@@ -2,26 +2,26 @@
 name: helpcenter
 description: >
   When the user wants to create, update, read, or manage help center articles
-  or customer conversations via the Help.Center API. Use when the user says
+  or customer conversations via the Helpcenter API. Use when the user says
   "write a help article", "update the docs", "publish an article", "add to the
   help center", "create a knowledge base article", "edit the getting started
-  guide", or mentions Help.Center, help articles, or knowledge base content
+  guide", or mentions Helpcenter (help.center), help articles, or knowledge base content
   management. Also use when the user says "reply to this customer", "draft a
   reply", "list open conversations", "assign this conversation", "add a note
-  to the conversation", or mentions the Help.Center inbox, customer support
+  to the conversation", or mentions the Helpcenter inbox, customer support
   conversations, customer replies, or internal discussion threads, or wants
   to create or manage knowledge bases (e.g. a separate one for a mobile app)
   and their design, SEO, header links or custom code. Also for AI-only FAQ
   knowledge, Actions (questions customers ask that the docs don't answer),
   help center analytics, and conversation or article metrics.
 metadata:
-  version: 1.2.0
+  version: 1.2.1
   author: Microdot Company
 ---
 
-# Help.Center API
+# Helpcenter API
 
-Manage help center articles and customer conversations through the Help.Center API.
+Manage help center articles and customer conversations through the Helpcenter API.
 
 The API has three parts:
 
@@ -31,15 +31,15 @@ The API has three parts:
 
 They compose well: when answering a customer, search articles first, draft a reply that references the relevant article, and let the user review before sending. When an Action shows a gap, write the missing article, then mark the Action resolved.
 
-# Help.Center Article Management
+# Helpcenter Article Management
 
-Manage help center articles through the Help.Center API. Supports creating new articles, reading and updating existing ones, publishing/unpublishing, organizing by category, managing translations, and uploading images.
+Manage help center articles through the Helpcenter API. Supports creating new articles, reading and updating existing ones, publishing/unpublishing, organizing by category, managing translations, and uploading images.
 
 ## Prerequisites
 
 Before making any API calls, you need two pieces of information from the user:
 
-1. **API Key** - Created in Help.Center dashboard under Settings > General > API
+1. **API Key** - Created in Helpcenter dashboard under Settings > General > API
    - The key must have appropriate scopes:
      - `content.read` - Required for searching/reading articles, drafts, categories, knowledge items, article metrics, and center info
      - `content.write` - Required for creating/updating articles, drafts, categories, and knowledge items, and uploading images
@@ -1218,9 +1218,9 @@ When writing help center articles:
 | Unpublish translation       | POST   | `/v0/centers/:centerId/articles/:articleId/translations/:lang/unpublish` | publish |
 | Delete translation          | DELETE | `/v0/centers/:centerId/articles/:articleId/translations/:lang`           | delete  |
 
-# Help.Center Conversation Management
+# Helpcenter Conversation Management
 
-Manage customer support conversations through the Help.Center API. Supports listing and reading conversations, drafting replies, sending replies to customers, posting internal discussion entries, and updating conversation status or assignee.
+Manage customer support conversations through the Helpcenter API. Supports listing and reading conversations, drafting replies, sending replies to customers, posting internal discussion entries, and updating conversation status or assignee.
 
 ## Conversation Concepts
 
@@ -1235,7 +1235,7 @@ A conversation's `from` field indicates the channel it originated on:
 | `from`     | Channel                                              |
 | ---------- | ---------------------------------------------------- |
 | `email`    | Customer sent an email to the support address.       |
-| `widget`   | Customer chatted via the embedded help.center widget. |
+| `widget`   | Customer chatted via the embedded Helpcenter widget. |
 | `website`  | Customer interacted via the website (e.g. AI search). |
 
 **Read endpoints work for all channels.** You can list, filter, and read messages and discussion on widget and website conversations exactly as you would on email conversations.
@@ -2079,7 +2079,7 @@ Returns the team members on this center. Use this to discover user ids for menti
 | Post discussion entry   | POST   | `/v0/centers/:centerId/conversations/:conversationId/discussion`               | write |
 | List center users       | GET    | `/v0/centers/:centerId/users`                                                  | read  |
 
-# Help.Center Knowledge, Actions and Analytics
+# Helpcenter Knowledge, Actions and Analytics
 
 AI-only knowledge, the gaps customers keep asking about, and the numbers behind the help center. Uses the same base URL, authentication, and error format as the article API.
 
