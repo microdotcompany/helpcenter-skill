@@ -304,6 +304,8 @@ Common error codes:
 
    The draft endpoint only accepts `title` and `html`. The API auto-generates the plain text version from the HTML. The `json` field (editor state) is internal and not accepted via the API.
 
+   Keep inline styles from the fetched HTML (text colors, highlights, alignment, table column widths) — the API stores them, so dropping them in your edit removes them from the article.
+
 4. **Publish the updated article** (ask the user first if they want to publish or keep as draft):
    ```bash
    curl -s -X POST \
@@ -329,6 +331,7 @@ Common error codes:
    - Use `<code>` for inline code and `<pre><code>` for code blocks
    - Use `<strong>` for emphasis on key terms
    - Use `<a href="...">` for links
+   - Text color: `<span style="color:#0B6E99">` — the editor's palette is blue `#0B6E99`, orange `#D9730D`, red `#E03E3E` (e.g. a blue `Note:` label). Highlight with `<mark>`, align with `style="text-align:center"`, size table columns with `<td colwidth="200" width="200px">`
    - Keep the tone clear, helpful, and concise
    - Structure content so users can scan and find what they need quickly
 
@@ -582,7 +585,7 @@ POST /v0/centers/:centerId/articles/:articleId/publish
 
 Scope: `content.publish`
 
-Publishes the current draft content as the live article. HTML is sanitized before publishing. A slug is auto-generated from the title if one doesn't exist.
+Publishes the current draft content as the live article. HTML is sanitized before publishing: scripts, event handlers and `url()` in CSS are removed; inline styles such as `color`, `background-color`, `text-align` and `width` are kept. A slug is auto-generated from the title if one doesn't exist.
 
 #### Unpublish Article
 
@@ -965,7 +968,7 @@ PATCH takes any subset of that shape and changes only the fields you send:
 
 - For a knowledge base other than the default, `null` removes its own value so it inherits again. For `default`, `null` resets the field to the built-in default.
 - `header_links` replaces the whole list (at most 20; `label` 1–60 chars; `path` a site path like `/contact`, an http(s) URL, or `mailto:`/`tel:`).
-- Colors are hex (`#1a73e8`); images are http(s) URLs (upload them in the dashboard); `layout` is `classic` or `docs`; `banner_type` is `color` or `image`; custom JS/CSS up to 100,000 characters each; `translations` keys must be one of `additional_languages`.
+- Colors are hex (`#1a73e8`); images are http(s) URLs (host them with [Image Upload](#image-upload)); `layout` is `classic` or `docs`; `banner_type` is `color` or `image`; custom JS/CSS up to 100,000 characters each; `translations` keys must be one of `additional_languages`.
 - Errors: `400 invalid_setting` / `unknown_setting` / `invalid_language`, `400 contact_link_not_allowed` (a contact link while email support is off), `403 plan_upgrade_required` (custom code needs a plan with integrations), `403 ai_limit_reached` (turning AI search on after the month's AI answers are used up).
 
 ```bash
@@ -989,7 +992,7 @@ Scope: `content.write`
 
 Upload an image for use in articles. Both endpoints work the same; the article-specific variant is optional.
 
-**Request:** Multipart form data with field name `image`.
+**Request:** Multipart form data with field name `image`:
 
 ```bash
 curl -s -X POST \
@@ -998,11 +1001,26 @@ curl -s -X POST \
   "https://api.help.center/v0/centers/$HC_CENTER_ID/articles/images"
 ```
 
+Or JSON with one of:
+
+| Field        | Description                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------ |
+| `source_url` | A public http(s) URL to copy the image from (redirects are followed)                              |
+| `data`       | The image as base64, or a `data:` URL                                                            |
+| `filename`   | Optional. Name for the hosted file; by default the last part of `source_url`, or `image`         |
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer $HC_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{ "source_url": "https://example.com/screenshot.png" }' \
+  "https://api.help.center/v0/centers/$HC_CENTER_ID/articles/images"
+```
+
 **Constraints:**
 
 - Maximum size: 10MB
-- Supported formats: JPEG, PNG, GIF, WebP, SVG
-- Use `multipart/form-data` with field name `image`
+- Supported formats: JPEG, PNG, GIF, WebP, SVG (a JSON upload's type is read from the image itself; the filename's extension is changed to match)
 
 **Response:**
 
@@ -1010,14 +1028,65 @@ curl -s -X POST \
 {
   "success": true,
   "data": {
-    "url": "https://cdn.help.center/images/...",
+    "url": "https://uploads.help.center/centers/CENTER_ID/articles/images/1761480000000-image.jpg",
     "filename": "image.jpg",
     "size": 1024576
   }
 }
 ```
 
+**Errors:** `400 missing_file`, `400 file_too_large`, `400 invalid_file_type`; for JSON also `400 invalid_source` (both `source_url` and `data`), `400 invalid_source_url`, `400 source_url_unreachable` (couldn't be fetched, or isn't on a public address), `400 invalid_data`.
+
 Use the returned `url` in your article HTML: `<img src="URL" alt="description">`.
+
+#### Upload Image Straight to Storage
+
+```
+POST /v0/centers/:centerId/articles/images/uploads
+POST /v0/centers/:centerId/articles/:articleId/images/uploads
+```
+
+Scope: `content.write`
+
+Get a one-time form (an S3 presigned POST) to upload an image file yourself, so its bytes never pass through the API. Useful when the file is on your machine and you can't send it as multipart.
+
+**Request body:** `{ "filename": "screenshot.png" }`. The extension sets the type (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`), and S3 accepts only that type, up to 10MB.
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "url": "https://uploads.help.center/centers/CENTER_ID/articles/images/1761480000000-screenshot.png",
+    "filename": "screenshot.png",
+    "content_type": "image/png",
+    "expires_in": 600,
+    "upload": {
+      "url": "https://s3.us-east-1.amazonaws.com/uploads.help.center",
+      "fields": { "key": "…", "Content-Type": "image/png", "Policy": "…", "X-Amz-Signature": "…" }
+    }
+  }
+}
+```
+
+Within `expires_in` seconds, POST `upload.url` as multipart form data with every `upload.fields` entry exactly as returned, then the file last as `file`:
+
+```bash
+curl -sS --fail-with-body \
+  --form-string "key=$KEY" \
+  --form-string "Content-Type=image/png" \
+  --form-string "bucket=uploads.help.center" \
+  --form-string "X-Amz-Algorithm=AWS4-HMAC-SHA256" \
+  --form-string "X-Amz-Credential=$CREDENTIAL" \
+  --form-string "X-Amz-Date=$DATE" \
+  --form-string "Policy=$POLICY" \
+  --form-string "X-Amz-Signature=$SIGNATURE" \
+  -F "file=@/path/to/screenshot.png" \
+  "https://s3.us-east-1.amazonaws.com/uploads.help.center"
+```
+
+`url` works only after that upload succeeds (S3 answers `204`). **Errors:** `400 invalid_filename`, `400 invalid_file_type`.
 
 ### Translations
 
@@ -1210,6 +1279,7 @@ When writing help center articles:
 | Delete category             | DELETE | `/v0/centers/:centerId/articles/categories/:categoryId`                  | delete  |
 | Upload image                | POST   | `/v0/centers/:centerId/articles/images`                                  | write   |
 | Upload image (article)      | POST   | `/v0/centers/:centerId/articles/:articleId/images`                       | write   |
+| Image upload form           | POST   | `/v0/centers/:centerId/articles/images/uploads`                          | write   |
 | Get translation             | GET    | `/v0/centers/:centerId/articles/:articleId/translations/:lang`           | read    |
 | Get translation draft       | GET    | `/v0/centers/:centerId/articles/:articleId/translations/:lang/draft`     | read    |
 | Update translation draft    | PATCH  | `/v0/centers/:centerId/articles/:articleId/translations/:lang/draft`     | write   |
