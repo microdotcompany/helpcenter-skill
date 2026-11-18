@@ -41,8 +41,8 @@ Before making any API calls, you need two pieces of information from the user:
 
 1. **API Key** - Created in Help.Center dashboard under Settings > General > API
    - The key must have appropriate scopes:
-     - `content.read` - Required for searching/reading articles, drafts, categories, knowledge items, article metrics, and center info
-     - `content.write` - Required for creating/updating articles, drafts, categories, and knowledge items, and uploading images
+     - `content.read` - Required for searching/reading articles, drafts, categories, article comments, knowledge items, article metrics, and center info
+     - `content.write` - Required for creating/updating articles, drafts, categories, and knowledge items, uploading images, and commenting on articles
      - `content.publish` - Required for publishing/unpublishing articles and translations
      - `content.delete` - Required for deleting articles, categories, translations, or knowledge items (and, with `settings.write`, knowledge bases)
      - `settings.write` - Required for managing knowledge bases and their settings, and for adding languages
@@ -1088,6 +1088,78 @@ curl -sS --fail-with-body \
 
 `url` works only after that upload succeeds (S3 answers `204`). **Errors:** `400 invalid_filename`, `400 invalid_file_type`.
 
+### Article Comments
+
+The team's internal review thread on an article (Discuss in the dashboard's article editor). Comments are never shown on the help center. `GET /articles/:articleId` and `GET /articles/:articleId/draft` include `comment_count`.
+
+#### List comments
+
+```
+GET /v0/centers/:centerId/articles/:articleId/comments
+```
+
+Scope: `content.read`
+
+Returns the article's comments, oldest first (up to 200; `has_more` is `true` when there are more). Works for published and draft-only articles.
+
+| Query      | Description                                                                 |
+| ---------- | --------------------------------------------------------------------------- |
+| `language` | Only comments on this version: `default` or one of the center's languages.  |
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "object": "article_comment",
+      "id": "6750a1b2c3d4e5f607080901",
+      "article_id": "65f1a2b3c4d5e6f708091011",
+      "article_title": "Resetting your password",
+      "language": "default",
+      "html": "<p>Should this mention SSO accounts?</p>",
+      "text": "Should this mention SSO accounts?",
+      "quote": "Click Forgot password on the sign-in page.",
+      "image": null,
+      "attachments": [],
+      "author": { "object": "user", "id": "65c2d3e4f5060708091011aa", "name": "Ana", "email": "ana@acme.com", "avatar": null },
+      "mentions": [],
+      "reactions": [{ "emoji": "👍", "count": 2 }],
+      "created_at": "2026-11-18T10:00:00.000Z"
+    }
+  ],
+  "has_more": false
+}
+```
+
+`quote` is the article text the comment is about, `image` the article image it was left on (both `null` when the comment is about the whole article). This is the same object the `article_comment_created` webhook sends.
+
+#### Post a comment
+
+```
+POST /v0/centers/:centerId/articles/:articleId/comments
+```
+
+Scope: `content.write`
+
+Posts a comment as the API key's owner. Mentioned users are notified by email, Slack and push, and the `article_comment_created` webhook fires. Mentions work as on discussion entries: `{{@USER_ID}}` placeholders in `content` and/or a `mentions` array (user ids from List Center Users).
+
+```json
+{
+  "content": "<p>{{@65c2d3e4f5060708091011bb}} the SSO steps changed last week, can you check this part?</p>",
+  "quote": "Click Forgot password on the sign-in page.",
+  "language": "default"
+}
+```
+
+| Field      | Required | Description                                                                                       |
+| ---------- | -------- | ------------------------------------------------------------------------------------------------- |
+| `content`  | Yes      | HTML comment body.                                                                                |
+| `mentions` | No       | Additional user ids to mention; combined with `{{@USER_ID}}` placeholders and deduplicated.       |
+| `quote`    | No       | The article text the comment is about, copied exactly (up to 1000 characters).                    |
+| `language` | No       | The version commented on: `default` (the default) or one of the center's languages.               |
+
+Returns `201` with the comment. **Errors:** `400 missing_content`, `400 invalid_mention` (a user outside this center), `400 invalid_language`, `404 article_not_found`.
+
 ### Translations
 
 Centers can have additional languages configured. Use the Get Center Info endpoint to check `additional_languages` for available language codes (e.g., `de`, `fr`, `es`). If the language you need isn't there, add it with POST `/languages` (after asking the user) before creating the translation.
@@ -1277,6 +1349,8 @@ When writing help center articles:
 | Create category             | POST   | `/v0/centers/:centerId/articles/categories`                              | write   |
 | Update category             | PATCH  | `/v0/centers/:centerId/articles/categories/:categoryId`                  | write   |
 | Delete category             | DELETE | `/v0/centers/:centerId/articles/categories/:categoryId`                  | delete  |
+| List article comments       | GET    | `/v0/centers/:centerId/articles/:articleId/comments`                     | read    |
+| Post article comment        | POST   | `/v0/centers/:centerId/articles/:articleId/comments`                     | write   |
 | Upload image                | POST   | `/v0/centers/:centerId/articles/images`                                  | write   |
 | Upload image (article)      | POST   | `/v0/centers/:centerId/articles/:articleId/images`                       | write   |
 | Image upload form           | POST   | `/v0/centers/:centerId/articles/images/uploads`                          | write   |
