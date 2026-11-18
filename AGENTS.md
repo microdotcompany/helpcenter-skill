@@ -16,7 +16,9 @@ This repository contains an **Agent Skill** for AI agents following the [Agent S
 ```
 helpcenter-skill/
 ├── .claude-plugin/
-│   └── marketplace.json   # Claude Code plugin manifest
+│   └── marketplace.json   # Claude Code marketplace: one plugin, "helpcenter", whose skill is SKILL.md
+├── .cursor-plugin/
+│   └── plugin.json        # Cursor plugin manifest
 ├── SKILL.md               # Skill definition and API reference
 ├── AGENTS.md
 ├── LICENSE
@@ -54,6 +56,10 @@ metadata:
 - Bold (`**text**`) for key terms
 - Code blocks for examples and templates
 - Tables for reference data
+
+## Releasing
+
+Bump the version in all three places together: `metadata.version` in `SKILL.md`, the plugin's `version` in `.claude-plugin/marketplace.json`, and `.cursor-plugin/plugin.json`. Check the Claude Code manifest with `claude plugin validate .` before pushing.
 
 ## Git Workflow
 

@@ -1,15 +1,25 @@
 {
-  "name": "helpcenter-skill",
-  "version": "1.4.0",
-  "description": "Manage help center articles via the Help.Center API — create, update, publish, and organize knowledge base content.",
-  "repository": "https://github.com/microdotcompany/helpcenter-skill",
-  "author": "Microdot Company",
-  "license": "MIT",
-  "skills": [
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "helpcenter",
+  "description": "Help.Center plugins for Claude Code.",
+  "owner": {
+    "name": "Microdot Company"
+  },
+  "plugins": [
     {
       "name": "helpcenter",
-      "path": "SKILL.md",
-      "description": "Create, update, search, publish, and manage help center articles via the Help.Center API."
+      "description": "Create, update, search, publish, and manage help center articles, knowledge bases, inbox conversations, AI knowledge, Actions and analytics via the Help.Center API.",
+      "version": "1.4.0",
+      "author": {
+        "name": "Microdot Company"
+      },
+      "homepage": "https://help.center",
+      "repository": "https://github.com/microdotcompany/helpcenter-skill",
+      "license": "MIT",
+      "keywords": ["help-center", "knowledge-base", "documentation", "articles", "customer-support"],
+      "category": "productivity",
+      "source": "./",
+      "skills": ["./"]
     }
   ]
 }

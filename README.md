@@ -22,8 +22,15 @@ Create, update, search, publish, and organize help center articles directly from
 
 ### Claude Code
 
-```bash
-claude install-skill https://github.com/microdotcompany/helpcenter-skill
+```
+/plugin install helpcenter --marketplace microdotcompany/helpcenter-skill
+```
+
+On older versions of Claude Code, add the marketplace first:
+
+```
+/plugin marketplace add microdotcompany/helpcenter-skill
+/plugin install helpcenter@helpcenter
 ```
 
 ### OpenClaw
@@ -81,8 +88,12 @@ The skill will ask for these when you first use it.
 ## Skill structure
 
 ```
-├── SKILL.md          # Skill definition and API reference
-├── AGENTS.md         # AI agent guidelines
+├── .claude-plugin/
+│   └── marketplace.json  # Claude Code marketplace (plugin "helpcenter")
+├── .cursor-plugin/
+│   └── plugin.json       # Cursor plugin manifest
+├── SKILL.md              # Skill definition and API reference
+├── AGENTS.md             # AI agent guidelines
 ├── README.md
 └── LICENSE
 ```
