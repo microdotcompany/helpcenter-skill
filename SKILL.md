@@ -15,7 +15,7 @@ description: >
   knowledge, Actions (questions customers ask that the docs don't answer),
   help center analytics, and conversation or article metrics.
 metadata:
-  version: 1.3.0
+  version: 1.4.0
   author: Microdot Company
 ---
 
@@ -52,7 +52,7 @@ Before making any API calls, you need two pieces of information from the user:
      - `analytics.read` - Required for the analytics overview
 2. **Center ID** - Found on the same page
 
-Some endpoints also need a plan that includes the feature: conversations, center users and conversation metrics need the **Inbox**, `/actions` needs **Actions**, and `/analytics` needs **Analytics**. On a plan without it the API returns `403 plan_upgrade_required` with an `upgrade_url`. Give that link to the user; anyone with billing access to the help center can upgrade there.
+Some endpoints also need a plan that includes the feature: conversations, center users and conversation metrics need the **Inbox**, `/actions` needs **Actions**, and `/analytics` needs **Analytics**. On a plan without it the API returns `403 plan_upgrade_required`: tell the user once which feature it is and which plans include it (`required_plans`); plan changes are made in the Help.Center dashboard. Don't retry or work around it with other endpoints.
 
 If the user hasn't provided these, ask for them before proceeding. Store them as environment variables for the session:
 
@@ -254,7 +254,7 @@ Common error codes:
 | 400 | `category_has_articles` | Cannot delete a category that has articles assigned to it |
 | 400 | `invalid_category` | The category isn't in that knowledge base's tree |
 | 400 | `no_category` | The knowledge base has no categories yet; create one first |
-| 403 | `plan_upgrade_required` | The plan doesn't include this (Inbox, Actions, Analytics, more knowledge bases, custom code). The body has `feature`, `current_plan`, `required_plans` and `upgrade_url` to give the user |
+| 403 | `plan_upgrade_required` | The plan doesn't include this (Inbox, Actions, Analytics, more knowledge bases, custom code). The body has `feature`, `current_plan` and `required_plans`: say which feature it is, once; plans are changed in the dashboard |
 | 403 | `feature_not_available` | The feature isn't offered to this account yet (e.g. managing additional knowledge bases). Upgrading doesn't help |
 | 404 | `knowledge_base_not_found` | No knowledge base with that id; use `default` or an id from `GET /knowledge-bases` |
 | 409 | `ambiguous_category` | Several knowledge bases have this category id; pass `knowledge_base` |
@@ -391,6 +391,8 @@ Common error codes:
 6. **Confirm knowledge base changes.** Creating, renaming or deleting a knowledge base, changing its visibility, and changing its settings are live on the public site right away. Deleting one permanently deletes the articles that are only in it — tell the user `articles_only_here` first, and send the number they confirmed as `expected_deleted_articles` so nothing more is deleted if articles were added since. Show the user any custom JavaScript/CSS before saving it.
 
 7. **Unpublishing cascades to translations.** When the root (default language) article is unpublished, **all translations are also unpublished** automatically. Warn the user about this before unpublishing a root article that has translations.
+
+8. **Ask before anything customers see or that can't be undone.** Say exactly what will happen and wait for a yes before: publishing or unpublishing, sending a reply, deleting anything, adding or changing AI knowledge, changing knowledge bases or their settings (including custom code), and adding languages. Drafts, internal notes and reads need no confirmation.
 
 ## API Endpoint Reference
 
@@ -942,7 +944,7 @@ The default knowledge base has `id: "default"`, `slug: null` and `is_default: tr
 | Update | PATCH | `/v0/centers/:centerId/knowledge-bases/:kbId` | `name`, `slug`, `description`, `icon`, `visibility`, `order`. A new slug keeps the old one in `previous_slugs`, so old links redirect. For `default` only `name`, `description` and `icon` (else `400 default_knowledge_base_fixed`). `409 conflict` if another change claimed the slug at the same time. |
 | Delete | DELETE | `/v0/centers/:centerId/knowledge-bases/:kbId?expected_deleted_articles=N` | Deletes it, its categories, and the articles only in it; shared articles stay in their other knowledge bases. Returns `{ deleted: true, deleted_articles, kept_articles }`. Not for `default`. Pass `expected_deleted_articles` with the `articles_only_here` count the user confirmed: if the count has changed, nothing is deleted and you get `409 confirmation_required` with the new `articles_only_here` to confirm again. Optional, but always send it. |
 
-**Slugs:** 3–40 lowercase letters, digits or hyphens, not starting or ending with a hyphen; not a language code (`es`, `pt-br`) or a reserved word (`article`, `category`, `search`, `api`, …). Errors: `slug_invalid_format`, `slug_reserved`, `slug_taken`. Creating one over the plan's limit returns `403 plan_upgrade_required` with `limit` and `upgrade_url`.
+**Slugs:** 3–40 lowercase letters, digits or hyphens, not starting or ending with a hyphen; not a language code (`es`, `pt-br`) or a reserved word (`article`, `category`, `search`, `api`, …). Errors: `slug_invalid_format`, `slug_reserved`, `slug_taken`. Creating one over the plan's limit returns `403 plan_upgrade_required` with `limit`.
 
 #### Knowledge Base Settings
 
@@ -1670,7 +1672,7 @@ Errors use the same shape as the article API. Conversation-specific error codes:
 | 400         | `missing_recipient`        | A reply was attempted but no `to` address could be resolved.                  |
 | 400         | `missing_content`          | Reply or discussion entry had no `content`.                                   |
 | 400         | `empty_draft`              | POST `/draft/send` was called but the stored draft is empty.                  |
-| 403         | `plan_upgrade_required`    | The center's plan doesn't include the Inbox. Give the user `upgrade_url`.     |
+| 403         | `plan_upgrade_required`    | The center's plan doesn't include the Inbox. Say so, once.                    |
 | 500         | `channel_not_configured`   | The center has no support channel configured to send from.                    |
 | 502         | `email_send_failed`        | The upstream email provider rejected the send.                                |
 
